@@ -4,15 +4,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 from rich.console import Console
 
-from app.config import DEFAULT_OUTPUT_ROOT
-from app.geometry.align import AlignmentResult, align_to_reference_frame
+from app.config import DEFAULT_OUTPUT_ROOT, DEFAULT_SYMMETRY_CONFIG, SymmetrySearchConfig
+from app.geometry.align import align_to_reference_frame
 from app.geometry.preprocess import load_mesh, summarize_mesh
-from app.geometry.symmetry import SymmetryResult, estimate_symmetry_plane
+from app.geometry.symmetry import estimate_symmetry_plane
 from app.models.helmet_scan import HelmetScan
 from app.models.mount_spec import MountSpec
-from app.models.result import PipelineResult, PipelineStage
+from app.models.result import AlignmentModel, PipelineResult, PipelineStage, SymmetryPlaneModel
 from app.utils.io import create_output_dir, export_mesh_as_stl, write_json
 
 console = Console()
@@ -22,6 +23,7 @@ def process_scan(
     scan_path: Path,
     mount_id: str,
     output_root: Optional[Path] = None,
+    symmetry_config: SymmetrySearchConfig = DEFAULT_SYMMETRY_CONFIG,
 ) -> PipelineResult:
     """Process a helmet scan mesh and persist first-pass run artifacts."""
 
@@ -38,7 +40,11 @@ def process_scan(
     scan = HelmetScan(path=scan_path.resolve(), name=scan_path.stem)
     mount = MountSpec.from_id(mount_id)
 
-    symmetry = estimate_symmetry_plane(mesh)
+    symmetry = estimate_symmetry_plane(mesh, symmetry_config)
+    console.log(
+        f"Symmetry score: {symmetry.score:.6g} "
+        f"(samples={symmetry.sample_count}, normal={_format_vector(symmetry.plane_normal)})"
+    )
     alignment = align_to_reference_frame(mesh, symmetry)
 
     aligned_mesh_path = output_dir / "aligned_mesh.stl"
@@ -71,6 +77,17 @@ def process_scan(
         scan=scan,
         mount=mount,
         mesh=mesh_info,
+        input_mesh=mesh_info,
+        symmetry=SymmetryPlaneModel(
+            plane_point=np.round(symmetry.plane_point, 6).tolist(),
+            plane_normal=np.round(symmetry.plane_normal, 8).tolist(),
+            score=symmetry.score,
+            sample_count=symmetry.sample_count,
+            search_config=symmetry.search_config,
+        ),
+        alignment=AlignmentModel(
+            transform_matrix=np.round(alignment.transform, 10).tolist(),
+        ),
         output_dir=output_dir,
         aligned_mesh_path=exported_path,
         result_json_path=result_json_path,
@@ -81,3 +98,9 @@ def process_scan(
 
     return result
 
+
+def _format_vector(vector: np.ndarray) -> str:
+    """Format a small numeric vector for readable logs."""
+
+    values = [f"{value:.4f}" for value in vector]
+    return f"[{', '.join(values)}]"

@@ -21,7 +21,7 @@ outputs/*
 !outputs/.gitkeep
 scans/*
 !scans/.gitkeep
+!scans/sample_box.stl
 
 .DS_Store
 Thumbs.db
-

@@ -7,6 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from app.config import DEFAULT_SYMMETRY_CONFIG, SymmetrySearchConfig
 from app.pipeline import process_scan
 
 app = typer.Typer(
@@ -42,10 +43,41 @@ def process(
         "--output-root",
         help="Directory where run outputs will be created.",
     ),
+    max_sample: int = typer.Option(
+        DEFAULT_SYMMETRY_CONFIG.max_sample,
+        "--max-sample",
+        min=1,
+        help="Maximum number of mesh vertices sampled for symmetry solving.",
+    ),
+    angle_range: float = typer.Option(
+        DEFAULT_SYMMETRY_CONFIG.angle_range_deg,
+        "--angle-range",
+        min=0.0,
+        help="Angular search range in degrees around the +X normal.",
+    ),
+    angle_step: float = typer.Option(
+        DEFAULT_SYMMETRY_CONFIG.angle_step_deg,
+        "--angle-step",
+        min=0.1,
+        help="Angular search step in degrees.",
+    ),
 ) -> None:
     """Run the first-pass helmet scan processing pipeline."""
 
-    result = process_scan(scan_path=scan_path, mount_id=mount, output_root=output_root)
+    symmetry_config = SymmetrySearchConfig(
+        max_sample=max_sample,
+        angle_range_deg=angle_range,
+        angle_step_deg=angle_step,
+        offset_ratio=DEFAULT_SYMMETRY_CONFIG.offset_ratio,
+        offset_steps=DEFAULT_SYMMETRY_CONFIG.offset_steps,
+        trim_ratio=DEFAULT_SYMMETRY_CONFIG.trim_ratio,
+    )
+    result = process_scan(
+        scan_path=scan_path,
+        mount_id=mount,
+        output_root=output_root,
+        symmetry_config=symmetry_config,
+    )
 
     table = Table(title="Process Result")
     table.add_column("Field", style="cyan", no_wrap=True)
@@ -56,6 +88,8 @@ def process(
     table.add_row("Output", str(result.output_dir))
     table.add_row("Vertices", str(result.mesh.vertex_count))
     table.add_row("Faces", str(result.mesh.face_count))
+    table.add_row("Symmetry Score", f"{result.symmetry.score:.6g}")
+    table.add_row("Symmetry Normal", str(result.symmetry.plane_normal))
     table.add_row("Aligned Mesh", str(result.aligned_mesh_path or "not exported"))
     table.add_row("Result JSON", str(result.result_json_path))
     console.print(table)

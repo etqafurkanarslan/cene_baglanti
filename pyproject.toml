@@ -18,6 +18,11 @@ dependencies = [
   "rich",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
+
 [project.scripts]
 cene-baglanti = "app.cli:app"
 

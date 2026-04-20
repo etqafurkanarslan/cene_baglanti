@@ -10,6 +10,8 @@ The first version provides a working Python CLI, mesh loading, output directory 
 
 ## Setup
 
+Python 3.10-3.13 is recommended. Python 3.14 may not have a compatible `open3d` wheel yet.
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -45,5 +47,4 @@ tests/
 
 ## Current Geometry Status
 
-`app.geometry.symmetry` and `app.geometry.align` intentionally contain deterministic stubs. Their function signatures are stable enough for the next implementation pass.
-
+`app.geometry.symmetry` solves an approximate YZ-like symmetry plane with sampled vertices, mirrored nearest-neighbor scoring, and trimmed mean error. `app.geometry.align` maps that plane to canonical `x=0` with the normal facing `+X`.

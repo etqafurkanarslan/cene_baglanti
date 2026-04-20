@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -20,6 +20,22 @@ class PipelineStage(BaseModel):
     message: str
 
 
+class SymmetryPlaneModel(BaseModel):
+    """Serialized symmetry plane solver output."""
+
+    plane_point: list[float]
+    plane_normal: list[float]
+    score: float
+    sample_count: int
+    search_config: dict[str, Any]
+
+
+class AlignmentModel(BaseModel):
+    """Serialized alignment transform output."""
+
+    transform_matrix: list[list[float]]
+
+
 class PipelineResult(BaseModel):
     """Complete metadata for one processing run."""
 
@@ -31,8 +47,10 @@ class PipelineResult(BaseModel):
     scan: HelmetScan
     mount: MountSpec
     mesh: MeshInfo
+    input_mesh: MeshInfo
+    symmetry: SymmetryPlaneModel
+    alignment: AlignmentModel
     output_dir: Path
     aligned_mesh_path: Optional[Path]
     result_json_path: Path
     stages: list[PipelineStage]
-
