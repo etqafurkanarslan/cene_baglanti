@@ -77,7 +77,11 @@ class MountAssetModel(BaseModel):
 
     type: str
     source: str
+    loaded_successfully: bool
+    vertex_count: int
+    face_count: int
     warning: Optional[str] = None
+    origin_mode: str
 
 
 class PipelineResult(BaseModel):

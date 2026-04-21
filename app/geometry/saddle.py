@@ -22,6 +22,7 @@ class SaddleConfig:
     profile_samples: int = 48
     patch_decimation_limit: int | None = 2000
     smoothing_passes: int = 0
+    contact_fit_method: str = "weighted_rbf"
     approved: bool = False
     mount_center_override: list[float] | None = None
     patch_radius_mm: float | None = None
@@ -70,7 +71,7 @@ def generate_saddle(
         patch_points_local=patch_surface["patch_points_local"],
         contact_profile_local=patch_surface["profile"],
         nearest_xy_distances=patch_surface["nearest_xy_distances"],
-        nearest_patch_z=patch_surface["nearest_patch_z"],
+        fitted_patch_z=patch_surface["fitted_patch_z"],
         config=config,
     )
 
@@ -154,14 +155,15 @@ def build_patch_support_surface(
         raise ValueError("Cannot build saddle support surface from an empty patch.")
 
     patch_local = _world_to_local(patch_points, mount_frame)
-    tree = cKDTree(patch_local[:, :2])
     top_profile = build_mount_footprint(config)["profile"]
 
     # Slightly larger contact boundary gives the saddle a stable lower lip.
     bottom_xy = top_profile[:, :2] * 1.08
-    distances, indices = tree.query(bottom_xy, k=1)
-    nearest_z = patch_local[indices, 2]
-    bottom_z = nearest_z + config.contact_offset_mm
+    fit = fit_contact_surface(patch_local, method=config.contact_fit_method)
+    sample = sample_contact_surface(fit, bottom_xy)
+    bottom_z = sample["z"] + config.contact_offset_mm
+    for _ in range(max(0, int(config.smoothing_passes))):
+        bottom_z = _smooth_circular(bottom_z)
     bottom_profile = np.column_stack([bottom_xy, bottom_z])
 
     if warnings is not None and len(patch_points) < 8:
@@ -170,14 +172,63 @@ def build_patch_support_surface(
     return {
         "profile": bottom_profile,
         "patch_points_local": patch_local,
-        "nearest_xy_distances": distances,
-        "nearest_patch_z": nearest_z,
+        "nearest_xy_distances": sample["nearest_xy_distances"],
+        "fitted_patch_z": sample["z"],
         "metadata": {
             "bottom_profile_samples": int(len(bottom_profile)),
             "bottom_profile_min_z_mm": float(np.min(bottom_profile[:, 2])),
             "bottom_profile_max_z_mm": float(np.max(bottom_profile[:, 2])),
-            "bottom_profile_mean_nearest_xy_distance_mm": float(np.mean(distances)),
+            "bottom_profile_mean_nearest_xy_distance_mm": float(
+                np.mean(sample["nearest_xy_distances"])
+            ),
+            "contact_fit_method": fit["method"],
+            "contact_fit_k": fit["k"],
+            "contact_smoothing_passes": int(config.smoothing_passes),
         },
+    }
+
+
+def fit_contact_surface(
+    patch_points_local: np.ndarray,
+    method: str = "weighted_rbf",
+    k: int = 8,
+) -> dict[str, Any]:
+    """Fit a deterministic local contact surface model over patch XY."""
+
+    points = np.asarray(patch_points_local, dtype=float)
+    if len(points) == 0:
+        raise ValueError("Cannot fit contact surface without patch points.")
+    if method not in {"weighted_rbf", "nearest"}:
+        raise ValueError(f"Unsupported contact fit method: {method}")
+    resolved_k = max(1, min(int(k), len(points)))
+    return {
+        "method": method,
+        "points": points,
+        "tree": cKDTree(points[:, :2]),
+        "k": resolved_k,
+    }
+
+
+def sample_contact_surface(
+    surface_fit: dict[str, Any],
+    sample_xy: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Sample fitted contact z values at requested local XY coordinates."""
+
+    sample_points = np.asarray(sample_xy, dtype=float)
+    distances, indices = surface_fit["tree"].query(sample_points, k=surface_fit["k"])
+    if surface_fit["k"] == 1:
+        distances = distances[:, np.newaxis]
+        indices = indices[:, np.newaxis]
+    neighbor_z = surface_fit["points"][indices, 2]
+    if surface_fit["method"] == "nearest":
+        z = neighbor_z[:, 0]
+    else:
+        weights = 1.0 / np.maximum(distances, 1e-6) ** 2
+        z = np.sum(weights * neighbor_z, axis=1) / np.sum(weights, axis=1)
+    return {
+        "z": z,
+        "nearest_xy_distances": distances[:, 0],
     }
 
 
@@ -253,12 +304,20 @@ def validate_generated_mesh(mesh: trimesh.Trimesh) -> dict[str, Any]:
     winding_consistent = bool(mesh.is_winding_consistent) if len(faces) > 0 else False
     if not winding_consistent:
         warnings.append("Mesh winding is not fully consistent.")
+    shell_count = _shell_count(mesh)
+    if shell_count > 1:
+        warnings.append(f"Mesh contains {shell_count} disconnected shells.")
+    is_manifold = bool(is_watertight and winding_consistent)
+    has_self_intersections = None
 
     return {
         "valid": len(warnings) == 0,
         "vertex_count": int(len(vertices)),
         "face_count": int(len(faces)),
         "is_watertight": is_watertight,
+        "is_manifold": is_manifold,
+        "shell_count": shell_count,
+        "has_self_intersections": has_self_intersections,
         "is_winding_consistent": winding_consistent,
         "warnings": warnings,
     }
@@ -268,7 +327,7 @@ def compute_contact_diagnostics(
     patch_points_local: np.ndarray,
     contact_profile_local: np.ndarray,
     nearest_xy_distances: np.ndarray,
-    nearest_patch_z: np.ndarray,
+    fitted_patch_z: np.ndarray,
     config: SaddleConfig,
 ) -> dict[str, Any]:
     """Compute approximate contact quality metrics for saddle support points."""
@@ -286,7 +345,7 @@ def compute_contact_diagnostics(
             "coverage_ratio": 0.0,
         }
 
-    signed_gaps = contact_profile_local[:, 2] - nearest_patch_z
+    signed_gaps = contact_profile_local[:, 2] - fitted_patch_z
     abs_gaps = np.abs(signed_gaps)
     coverage_threshold = max(config.contact_offset_mm + config.wall_thickness_mm, 1.0)
     coverage_ratio = float(np.mean(nearest_xy_distances <= coverage_threshold))
@@ -362,6 +421,23 @@ def _validated_sample_count(profile_samples: int) -> int:
     """Clamp profile sample count to a practical minimum."""
 
     return max(12, int(profile_samples))
+
+
+def _smooth_circular(values: np.ndarray) -> np.ndarray:
+    """Apply one deterministic circular smoothing pass."""
+
+    return (np.roll(values, 1) + 2.0 * values + np.roll(values, -1)) / 4.0
+
+
+def _shell_count(mesh: trimesh.Trimesh) -> int:
+    """Return disconnected face shell count when possible."""
+
+    if len(mesh.faces) == 0:
+        return 0
+    try:
+        return int(len(mesh.split(only_watertight=False)))
+    except Exception:
+        return 0
 
 
 def _mesh_stats(mesh: trimesh.Trimesh) -> dict[str, Any]:

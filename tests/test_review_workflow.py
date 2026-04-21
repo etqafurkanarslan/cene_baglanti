@@ -83,8 +83,8 @@ def test_cli_overrides_review_json() -> None:
     assert result.saddle.contact_offset_mm == 0.2
 
 
-def test_diagnostics_and_mount_asset_fallback_are_written() -> None:
-    """M4 outputs should include diagnostics and placeholder asset metadata."""
+def test_diagnostics_and_real_mount_asset_are_written() -> None:
+    """M5 outputs should include diagnostics and real mount asset metadata."""
 
     work_dir = _work_dir("diagnostics_asset")
     scan_path = _write_box_scan(work_dir)
@@ -102,11 +102,35 @@ def test_diagnostics_and_mount_asset_fallback_are_written() -> None:
     assert result.diagnostics["contact_point_count"] > 0
     assert result.diagnostics["mean_gap_mm"] is not None
     assert "p90_gap_mm" in result.diagnostics
-    assert result.mount_asset.type == "placeholder"
+    assert result.mount_asset.type == "real"
     assert result.mount_asset.source == str(asset_path)
-    assert result.mount_asset.warning is not None
+    assert result.mount_asset.loaded_successfully is True
+    assert result.mount_asset.vertex_count > 0
+    assert result.mount_asset.face_count > 0
+    assert result.mount_asset.warning is None
     assert debug["diagnostics"]["contact_point_count"] == result.diagnostics["contact_point_count"]
-    assert debug["mount_asset"]["type"] == "placeholder"
+    assert debug["mount_asset"]["type"] == "real"
+    assert debug["generated_profile_stats"]["contact_fit_method"] == "weighted_rbf"
+
+
+def test_missing_mount_asset_falls_back_to_placeholder() -> None:
+    """Missing real assets should not break the pipeline."""
+
+    work_dir = _work_dir("missing_asset")
+    scan_path = _write_box_scan(work_dir)
+    missing_path = work_dir / "missing_asset.stl"
+
+    result = process_scan(
+        scan_path=scan_path,
+        mount_id="gopro_low_profile_v1",
+        output_root=work_dir / "runs",
+        mount_asset_path=missing_path,
+    )
+
+    assert result.mount_asset.type == "placeholder"
+    assert result.mount_asset.loaded_successfully is False
+    assert result.mount_asset.warning is not None
+    assert result.saddle.validation["shell_count"] >= 1
 
 
 def _write_box_scan(tmp_path: Path) -> Path:

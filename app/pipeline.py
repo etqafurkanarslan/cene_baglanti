@@ -53,6 +53,9 @@ def process_scan(
     footprint_height_override: Optional[float] = None,
     saddle_height_override: Optional[float] = None,
     mount_asset_path: Optional[Path] = None,
+    contact_fit_method: Optional[str] = None,
+    contact_smoothing_passes: Optional[int] = None,
+    mount_asset_origin_mode: str = "mount-local",
 ) -> PipelineResult:
     """Process a helmet scan mesh and persist first-pass run artifacts."""
 
@@ -146,7 +149,12 @@ def process_scan(
         wall_thickness_mm=base_saddle_config.wall_thickness_mm,
         profile_samples=base_saddle_config.profile_samples,
         patch_decimation_limit=base_saddle_config.patch_decimation_limit,
-        smoothing_passes=base_saddle_config.smoothing_passes,
+        smoothing_passes=(
+            int(contact_smoothing_passes)
+            if contact_smoothing_passes is not None
+            else base_saddle_config.smoothing_passes
+        ),
+        contact_fit_method=contact_fit_method or base_saddle_config.contact_fit_method,
         approved=review_data.approved,
         mount_center_override=(
             np.round(resolved_mount_center_override, 6).tolist()
@@ -156,7 +164,12 @@ def process_scan(
         patch_radius_mm=active_placement_config.patch_radius_mm,
         notes=review_data.notes,
     )
-    mount_asset = resolve_mount_asset(mount_frame, active_saddle_config, mount_asset_path)
+    mount_asset = resolve_mount_asset(
+        mount_frame,
+        active_saddle_config,
+        mount_asset_path,
+        origin_mode=mount_asset_origin_mode,
+    )
     saddle_result = generate_saddle(
         mount_frame=mount_frame,
         local_patch=local_patch,
@@ -165,7 +178,11 @@ def process_scan(
         mount_asset_metadata={
             "type": mount_asset.type,
             "source": mount_asset.source,
+            "loaded_successfully": mount_asset.loaded_successfully,
+            "vertex_count": mount_asset.vertex_count,
+            "face_count": mount_asset.face_count,
             "warning": mount_asset.warning,
+            "origin_mode": mount_asset.origin_mode,
         },
     )
     console.log(
@@ -293,7 +310,11 @@ def process_scan(
         mount_asset=MountAssetModel(
             type=mount_asset.type,
             source=mount_asset.source,
+            loaded_successfully=mount_asset.loaded_successfully,
+            vertex_count=mount_asset.vertex_count,
+            face_count=mount_asset.face_count,
             warning=mount_asset.warning,
+            origin_mode=mount_asset.origin_mode,
         ),
         output_dir=output_dir,
         aligned_mesh_path=exported_path,

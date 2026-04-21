@@ -125,11 +125,26 @@ def process(
     mount_asset: Optional[Path] = typer.Option(
         None,
         "--mount-asset",
-        exists=True,
         file_okay=True,
         dir_okay=False,
         readable=True,
-        help="Optional mount asset STL path; currently falls back to placeholder.",
+        help="Optional mount asset STL path; invalid assets fall back to placeholder.",
+    ),
+    contact_fit_method: str = typer.Option(
+        SaddleConfig.contact_fit_method,
+        "--contact-fit-method",
+        help="Contact surface fit method: weighted_rbf or nearest.",
+    ),
+    contact_smoothing_passes: int = typer.Option(
+        SaddleConfig.smoothing_passes,
+        "--contact-smoothing-passes",
+        min=0,
+        help="Number of circular smoothing passes for contact profile.",
+    ),
+    mount_asset_origin_mode: str = typer.Option(
+        "mount-local",
+        "--mount-asset-origin-mode",
+        help="Asset coordinate convention. Current supported value: mount-local.",
     ),
 ) -> None:
     """Run the first-pass helmet scan processing pipeline."""
@@ -167,6 +182,9 @@ def process(
         footprint_height_override=footprint_height,
         saddle_height_override=saddle_height,
         mount_asset_path=mount_asset,
+        contact_fit_method=contact_fit_method,
+        contact_smoothing_passes=contact_smoothing_passes,
+        mount_asset_origin_mode=mount_asset_origin_mode,
     )
 
     table = Table(title="Process Result")

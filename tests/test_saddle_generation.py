@@ -27,8 +27,13 @@ def test_saddle_generation_is_valid_and_deterministic() -> None:
     assert first.validation["vertex_count"] > 0
     assert first.validation["face_count"] > 0
     assert first.validation["is_watertight"]
+    assert first.validation["is_manifold"]
+    assert first.validation["shell_count"] >= 1
+    assert first.validation["has_self_intersections"] is None
     assert first.mesh_stats == second.mesh_stats
     assert first.debug["generated_profile_stats"] == second.debug["generated_profile_stats"]
+    assert first.debug["diagnostics"] == second.debug["diagnostics"]
+    assert first.debug["generated_profile_stats"]["contact_fit_method"] == "weighted_rbf"
 
 
 def test_footprint_override_changes_generated_bounds() -> None:
@@ -51,6 +56,26 @@ def test_footprint_override_changes_generated_bounds() -> None:
     narrow_width = _bounds_width(narrow.mesh_stats["final"])
     wide_width = _bounds_width(wide.mesh_stats["final"])
     assert wide_width > narrow_width
+
+
+def test_contact_surface_method_is_deterministic() -> None:
+    """Weighted contact surface sampling should produce stable diagnostics."""
+
+    frame = _test_mount_frame()
+    patch = _test_patch()
+    config = SaddleConfig(
+        contact_fit_method="weighted_rbf",
+        smoothing_passes=1,
+        footprint_width_mm=22.0,
+        footprint_height_mm=16.0,
+        profile_samples=24,
+    )
+
+    first = generate_saddle(frame, patch, config)
+    second = generate_saddle(frame, patch, config)
+
+    assert first.debug["diagnostics"] == second.debug["diagnostics"]
+    assert first.debug["generated_profile_stats"]["contact_smoothing_passes"] == 1
 
 
 def _test_mount_frame() -> MountFrame:

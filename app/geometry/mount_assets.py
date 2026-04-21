@@ -18,28 +18,56 @@ class MountAsset:
     mesh: trimesh.Trimesh
     type: str
     source: str
+    loaded_successfully: bool
+    vertex_count: int
+    face_count: int
     warning: str | None = None
+    origin_mode: str = "mount_local_origin"
 
 
 def resolve_mount_asset(
     mount_frame: MountFrame,
     config: SaddleConfig,
     asset_path: Optional[Path] = None,
+    origin_mode: str = "mount-local",
 ) -> MountAsset:
     """Resolve a mount mesh asset, falling back to the placeholder mount."""
 
     if asset_path is None:
+        mesh = build_placeholder_mount(mount_frame, config)
         return MountAsset(
-            mesh=build_placeholder_mount(mount_frame, config),
+            mesh=mesh,
             type="placeholder",
             source="generated_oval_plate",
+            loaded_successfully=False,
+            vertex_count=int(len(mesh.vertices)),
+            face_count=int(len(mesh.faces)),
+            origin_mode=origin_mode,
         )
-    return MountAsset(
-        mesh=build_placeholder_mount(mount_frame, config),
-        type="placeholder",
-        source=str(asset_path),
-        warning="External mount asset import is not implemented yet; used placeholder.",
-    )
+    try:
+        loaded = _load_mount_mesh(asset_path)
+        transformed = transform_mount_asset_to_frame(loaded, mount_frame)
+        return MountAsset(
+            mesh=transformed,
+            type="real",
+            source=str(asset_path),
+            loaded_successfully=True,
+            vertex_count=int(len(transformed.vertices)),
+            face_count=int(len(transformed.faces)),
+            origin_mode=origin_mode,
+        )
+    except Exception as exc:
+        mesh = build_placeholder_mount(mount_frame, config)
+        return MountAsset(
+            mesh=mesh,
+            type="placeholder",
+            source=str(asset_path),
+            loaded_successfully=False,
+            vertex_count=int(len(mesh.vertices)),
+            face_count=int(len(mesh.faces)),
+            warning=f"Mount asset import failed; used placeholder. Reason: {exc}",
+            origin_mode=origin_mode,
+        )
 
 
 def build_placeholder_mount(
@@ -68,7 +96,37 @@ def transform_mount_asset_to_frame(
     mesh: trimesh.Trimesh,
     mount_frame: MountFrame,
 ) -> trimesh.Trimesh:
-    """Placeholder hook for future real asset transforms."""
+    """Transform mount-local asset coordinates into the mount frame.
 
-    _ = mount_frame
-    return mesh.copy()
+    Convention: asset local origin is the mount center; local +X/+Y/+Z map to
+    mount_frame x_axis/y_axis/z_axis respectively, in millimeters.
+    """
+
+    transformed = mesh.copy()
+    local = np.asarray(transformed.vertices, dtype=float)
+    world = (
+        mount_frame.origin
+        + local[:, 0, np.newaxis] * mount_frame.x_axis
+        + local[:, 1, np.newaxis] * mount_frame.y_axis
+        + local[:, 2, np.newaxis] * mount_frame.z_axis
+    )
+    transformed.vertices = world
+    return transformed
+
+
+def _load_mount_mesh(asset_path: Path) -> trimesh.Trimesh:
+    """Load and validate a real mount asset mesh."""
+
+    if not asset_path.exists():
+        raise FileNotFoundError(asset_path)
+    loaded = trimesh.load(asset_path, force="mesh")
+    if isinstance(loaded, trimesh.Scene):
+        loaded = trimesh.util.concatenate(list(loaded.geometry.values()))
+    if not isinstance(loaded, trimesh.Trimesh):
+        raise ValueError(f"Unsupported asset type: {type(loaded)!r}")
+    if len(loaded.vertices) == 0 or len(loaded.faces) == 0:
+        raise ValueError("Asset mesh is empty.")
+    vertices = np.asarray(loaded.vertices, dtype=float)
+    if not np.isfinite(vertices).all():
+        raise ValueError("Asset mesh contains non-finite coordinates.")
+    return loaded
