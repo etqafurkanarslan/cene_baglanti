@@ -68,8 +68,8 @@ def process(
         min=0.1,
         help="Angular search step in degrees.",
     ),
-    patch_radius: float = typer.Option(
-        DEFAULT_PLACEMENT_CONFIG.patch_radius_mm,
+    patch_radius: Optional[float] = typer.Option(
+        None,
         "--patch-radius",
         min=0.1,
         help="Radius in millimeters for local mount patch extraction.",
@@ -89,29 +89,47 @@ def process(
         "--mount-center-z",
         help="Override mount center Z coordinate in aligned mesh coordinates.",
     ),
-    contact_offset: float = typer.Option(
-        SaddleConfig.contact_offset_mm,
+    contact_offset: Optional[float] = typer.Option(
+        None,
         "--contact-offset",
         min=0.0,
         help="Offset from sampled helmet patch to saddle contact surface.",
     ),
-    footprint_width: float = typer.Option(
-        SaddleConfig.footprint_width_mm,
+    footprint_width: Optional[float] = typer.Option(
+        None,
         "--footprint-width",
         min=1.0,
         help="Saddle/mount footprint width in millimeters.",
     ),
-    footprint_height: float = typer.Option(
-        SaddleConfig.footprint_height_mm,
+    footprint_height: Optional[float] = typer.Option(
+        None,
         "--footprint-height",
         min=1.0,
         help="Saddle/mount footprint height in millimeters.",
     ),
-    saddle_height: float = typer.Option(
-        SaddleConfig.saddle_height_mm,
+    saddle_height: Optional[float] = typer.Option(
+        None,
         "--saddle-height",
         min=0.1,
         help="Height from contact support to top footprint in millimeters.",
+    ),
+    review: Optional[Path] = typer.Option(
+        None,
+        "--review",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to review.json with approval and numeric overrides.",
+    ),
+    mount_asset: Optional[Path] = typer.Option(
+        None,
+        "--mount-asset",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Optional mount asset STL path; currently falls back to placeholder.",
     ),
 ) -> None:
     """Run the first-pass helmet scan processing pipeline."""
@@ -125,7 +143,7 @@ def process(
         trim_ratio=DEFAULT_SYMMETRY_CONFIG.trim_ratio,
     )
     placement_config = PlacementConfig(
-        patch_radius_mm=patch_radius,
+        patch_radius_mm=DEFAULT_PLACEMENT_CONFIG.patch_radius_mm,
         center_band_mm=DEFAULT_PLACEMENT_CONFIG.center_band_mm,
         front_percentile=DEFAULT_PLACEMENT_CONFIG.front_percentile,
         lower_percentile=DEFAULT_PLACEMENT_CONFIG.lower_percentile,
@@ -135,18 +153,6 @@ def process(
         mount_center_y,
         mount_center_z,
     )
-    saddle_config = SaddleConfig(
-        contact_offset_mm=contact_offset,
-        footprint_width_mm=footprint_width,
-        footprint_height_mm=footprint_height,
-        saddle_height_mm=saddle_height,
-        patch_radius_mm=patch_radius,
-        mount_center_override=(
-            mount_center_override.round(6).tolist()
-            if mount_center_override is not None
-            else None
-        ),
-    )
     result = process_scan(
         scan_path=scan_path,
         mount_id=mount,
@@ -154,7 +160,13 @@ def process(
         symmetry_config=symmetry_config,
         placement_config=placement_config,
         mount_center_override=mount_center_override,
-        saddle_config=saddle_config,
+        review_path=review,
+        patch_radius_override=patch_radius,
+        contact_offset_override=contact_offset,
+        footprint_width_override=footprint_width,
+        footprint_height_override=footprint_height,
+        saddle_height_override=saddle_height,
+        mount_asset_path=mount_asset,
     )
 
     table = Table(title="Process Result")
@@ -172,6 +184,8 @@ def process(
     table.add_row("Mount Center Source", result.mount_center_source)
     table.add_row("Saddle Preview", str(result.saddle.preview_path))
     table.add_row("Final Mount", str(result.saddle.final_mount_path))
+    table.add_row("Review Approved", str(result.review.approved))
+    table.add_row("Contact Mean Gap", str(result.diagnostics.get("mean_gap_mm")))
     table.add_row("Aligned Mesh", str(result.aligned_mesh_path or "not exported"))
     table.add_row("Result JSON", str(result.result_json_path))
     console.print(table)

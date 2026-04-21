@@ -44,6 +44,8 @@ def generate_saddle(
     mount_frame: MountFrame,
     local_patch: LocalPatch,
     config: SaddleConfig,
+    mount_asset_mesh: trimesh.Trimesh | None = None,
+    mount_asset_metadata: dict[str, Any] | None = None,
 ) -> SaddleResult:
     """Generate a saddle and merged final mount mesh."""
 
@@ -55,10 +57,22 @@ def generate_saddle(
         top_profile_local=footprint["profile"],
         bottom_profile_local=patch_surface["profile"],
     )
-    final_mesh = merge_mount_and_saddle(saddle_mesh, mount_frame, config)
+    final_mesh = merge_mount_and_saddle(
+        saddle_mesh=saddle_mesh,
+        mount_frame=mount_frame,
+        config=config,
+        mount_asset_mesh=mount_asset_mesh,
+    )
     validation = validate_generated_mesh(final_mesh)
     if not validation["valid"]:
         warnings.extend(validation["warnings"])
+    diagnostics = compute_contact_diagnostics(
+        patch_points_local=patch_surface["patch_points_local"],
+        contact_profile_local=patch_surface["profile"],
+        nearest_xy_distances=patch_surface["nearest_xy_distances"],
+        nearest_patch_z=patch_surface["nearest_patch_z"],
+        config=config,
+    )
 
     mesh_stats = {
         "saddle": _mesh_stats(saddle_mesh),
@@ -78,6 +92,9 @@ def generate_saddle(
         },
         "mesh_stats": mesh_stats,
         "validation": validation,
+        "diagnostics": diagnostics,
+        "mount_asset": mount_asset_metadata
+        or {"type": "placeholder", "source": "generated_oval_plate"},
         "warnings": warnings,
         "review": {
             "approved": config.approved,
@@ -153,6 +170,8 @@ def build_patch_support_surface(
     return {
         "profile": bottom_profile,
         "patch_points_local": patch_local,
+        "nearest_xy_distances": distances,
+        "nearest_patch_z": nearest_z,
         "metadata": {
             "bottom_profile_samples": int(len(bottom_profile)),
             "bottom_profile_min_z_mm": float(np.min(bottom_profile[:, 2])),
@@ -205,10 +224,11 @@ def merge_mount_and_saddle(
     saddle_mesh: trimesh.Trimesh,
     mount_frame: MountFrame,
     config: SaddleConfig,
+    mount_asset_mesh: trimesh.Trimesh | None = None,
 ) -> trimesh.Trimesh:
     """Merge saddle with a simple top mount plate for V1 final export."""
 
-    plate = _build_mount_plate(mount_frame, config)
+    plate = mount_asset_mesh if mount_asset_mesh is not None else _build_mount_plate(mount_frame, config)
     merged = trimesh.util.concatenate([saddle_mesh, plate])
     merged.remove_unreferenced_vertices()
     return merged
@@ -241,6 +261,49 @@ def validate_generated_mesh(mesh: trimesh.Trimesh) -> dict[str, Any]:
         "is_watertight": is_watertight,
         "is_winding_consistent": winding_consistent,
         "warnings": warnings,
+    }
+
+
+def compute_contact_diagnostics(
+    patch_points_local: np.ndarray,
+    contact_profile_local: np.ndarray,
+    nearest_xy_distances: np.ndarray,
+    nearest_patch_z: np.ndarray,
+    config: SaddleConfig,
+) -> dict[str, Any]:
+    """Compute approximate contact quality metrics for saddle support points."""
+
+    if len(contact_profile_local) == 0:
+        return {
+            "patch_point_count": int(len(patch_points_local)),
+            "contact_point_count": 0,
+            "min_gap_mm": None,
+            "max_gap_mm": None,
+            "mean_gap_mm": None,
+            "p50_gap_mm": None,
+            "p90_gap_mm": None,
+            "penetration_count": 0,
+            "coverage_ratio": 0.0,
+        }
+
+    signed_gaps = contact_profile_local[:, 2] - nearest_patch_z
+    abs_gaps = np.abs(signed_gaps)
+    coverage_threshold = max(config.contact_offset_mm + config.wall_thickness_mm, 1.0)
+    coverage_ratio = float(np.mean(nearest_xy_distances <= coverage_threshold))
+    return {
+        "patch_point_count": int(len(patch_points_local)),
+        "contact_point_count": int(len(contact_profile_local)),
+        "sampled_contact_point_count": int(len(contact_profile_local)),
+        "min_gap_mm": float(np.min(signed_gaps)),
+        "max_gap_mm": float(np.max(signed_gaps)),
+        "mean_gap_mm": float(np.mean(signed_gaps)),
+        "p50_gap_mm": float(np.percentile(signed_gaps, 50)),
+        "p90_gap_mm": float(np.percentile(signed_gaps, 90)),
+        "penetration_count": int(np.sum(signed_gaps < -1e-6)),
+        "coverage_ratio": coverage_ratio,
+        "mean_nearest_xy_distance_mm": float(np.mean(nearest_xy_distances)),
+        "max_nearest_xy_distance_mm": float(np.max(nearest_xy_distances)),
+        "mean_abs_gap_mm": float(np.mean(abs_gaps)),
     }
 
 

@@ -59,6 +59,25 @@ class SaddleModel(BaseModel):
     saddle_height_mm: float
     validation: dict[str, Any]
     mesh_stats: dict[str, Any]
+    final_export_status: str
+
+
+class ReviewModel(BaseModel):
+    """Serialized review workflow metadata."""
+
+    approved: bool
+    notes: str
+    override_source: str
+    applied_fields: dict[str, str]
+    source_path: Optional[Path]
+
+
+class MountAssetModel(BaseModel):
+    """Serialized mount asset metadata."""
+
+    type: str
+    source: str
+    warning: Optional[str] = None
 
 
 class PipelineResult(BaseModel):
@@ -80,6 +99,9 @@ class PipelineResult(BaseModel):
     mount_patch_radius_mm: float
     chin_patch: dict[str, Any]
     saddle: SaddleModel
+    review: ReviewModel
+    diagnostics: dict[str, Any]
+    mount_asset: MountAssetModel
     output_dir: Path
     aligned_mesh_path: Optional[Path]
     mount_frame_path: Optional[Path]

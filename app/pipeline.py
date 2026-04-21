@@ -16,6 +16,7 @@ from app.config import (
 )
 from app.geometry.align import align_to_reference_frame
 from app.geometry.features import estimate_local_frame, estimate_mount_center
+from app.geometry.mount_assets import resolve_mount_asset
 from app.geometry.preprocess import load_mesh, summarize_mesh
 from app.geometry.saddle import SaddleConfig, generate_saddle
 from app.geometry.symmetry import SymmetryResult, estimate_symmetry_plane
@@ -24,11 +25,14 @@ from app.models.mount_spec import MountSpec
 from app.models.result import (
     AlignmentModel,
     MountFrameModel,
+    MountAssetModel,
     PipelineResult,
     PipelineStage,
+    ReviewModel,
     SaddleModel,
     SymmetryPlaneModel,
 )
+from app.review import center_to_array, load_review, resolve_review
 from app.utils.io import create_output_dir, export_mesh_as_stl, write_json
 
 console = Console()
@@ -42,6 +46,13 @@ def process_scan(
     placement_config: PlacementConfig = DEFAULT_PLACEMENT_CONFIG,
     mount_center_override: Optional[np.ndarray] = None,
     saddle_config: Optional[SaddleConfig] = None,
+    review_path: Optional[Path] = None,
+    patch_radius_override: Optional[float] = None,
+    contact_offset_override: Optional[float] = None,
+    footprint_width_override: Optional[float] = None,
+    footprint_height_override: Optional[float] = None,
+    saddle_height_override: Optional[float] = None,
+    mount_asset_path: Optional[Path] = None,
 ) -> PipelineResult:
     """Process a helmet scan mesh and persist first-pass run artifacts."""
 
@@ -57,6 +68,34 @@ def process_scan(
 
     scan = HelmetScan(path=scan_path.resolve(), name=scan_path.stem)
     mount = MountSpec.from_id(mount_id)
+    review_data = load_review(review_path)
+    review_resolution = resolve_review(
+        review_data,
+        {
+            "mount_center_override": mount_center_override,
+            "patch_radius_mm": patch_radius_override,
+            "contact_offset_mm": contact_offset_override,
+            "footprint_width_mm": footprint_width_override,
+            "footprint_height_mm": footprint_height_override,
+            "saddle_height_mm": saddle_height_override,
+        },
+    )
+    resolved_mount_center_override = (
+        mount_center_override
+        if mount_center_override is not None
+        else center_to_array(review_data.mount_center_override)
+    )
+    resolved_patch_radius = _resolve_float(
+        patch_radius_override,
+        review_data.patch_radius_mm,
+        placement_config.patch_radius_mm,
+    )
+    active_placement_config = PlacementConfig(
+        patch_radius_mm=resolved_patch_radius,
+        center_band_mm=placement_config.center_band_mm,
+        front_percentile=placement_config.front_percentile,
+        lower_percentile=placement_config.lower_percentile,
+    )
 
     symmetry = estimate_symmetry_plane(mesh, symmetry_config)
     console.log(
@@ -69,31 +108,65 @@ def process_scan(
     mount_center, mount_center_source, chin_region = estimate_mount_center(
         mesh=alignment.mesh,
         symmetry_result=canonical_symmetry,
-        config=placement_config,
-        override=mount_center_override,
+        config=active_placement_config,
+        override=resolved_mount_center_override,
     )
     mount_frame, local_patch = estimate_local_frame(
         mesh=alignment.mesh,
         mount_center=mount_center,
         symmetry_result=canonical_symmetry,
-        patch_radius_mm=placement_config.patch_radius_mm,
+        patch_radius_mm=active_placement_config.patch_radius_mm,
     )
     console.log(
         f"Mount center: {_format_vector(mount_center)} "
         f"(source={mount_center_source}, patch_vertices={len(local_patch.vertex_indices)})"
     )
-    active_saddle_config = saddle_config or SaddleConfig(
-        patch_radius_mm=placement_config.patch_radius_mm,
+    base_saddle_config = saddle_config or SaddleConfig()
+    active_saddle_config = SaddleConfig(
+        contact_offset_mm=_resolve_float(
+            contact_offset_override,
+            review_data.contact_offset_mm,
+            base_saddle_config.contact_offset_mm,
+        ),
+        footprint_width_mm=_resolve_float(
+            footprint_width_override,
+            review_data.footprint_width_mm,
+            base_saddle_config.footprint_width_mm,
+        ),
+        footprint_height_mm=_resolve_float(
+            footprint_height_override,
+            review_data.footprint_height_mm,
+            base_saddle_config.footprint_height_mm,
+        ),
+        saddle_height_mm=_resolve_float(
+            saddle_height_override,
+            review_data.saddle_height_mm,
+            base_saddle_config.saddle_height_mm,
+        ),
+        wall_thickness_mm=base_saddle_config.wall_thickness_mm,
+        profile_samples=base_saddle_config.profile_samples,
+        patch_decimation_limit=base_saddle_config.patch_decimation_limit,
+        smoothing_passes=base_saddle_config.smoothing_passes,
+        approved=review_data.approved,
         mount_center_override=(
-            np.round(mount_center_override, 6).tolist()
-            if mount_center_override is not None
+            np.round(resolved_mount_center_override, 6).tolist()
+            if resolved_mount_center_override is not None
             else None
         ),
+        patch_radius_mm=active_placement_config.patch_radius_mm,
+        notes=review_data.notes,
     )
+    mount_asset = resolve_mount_asset(mount_frame, active_saddle_config, mount_asset_path)
     saddle_result = generate_saddle(
         mount_frame=mount_frame,
         local_patch=local_patch,
         config=active_saddle_config,
+        mount_asset_mesh=mount_asset.mesh,
+        mount_asset_metadata={
+            "type": mount_asset.type,
+            "source": mount_asset.source,
+            "warning": mount_asset.warning,
+        },
     )
     console.log(
         "Saddle generated: "
@@ -119,7 +192,7 @@ def process_scan(
         "z_axis": _rounded_vector(mount_frame.z_axis),
         "source": mount_frame.source,
         "mount_center_source": mount_center_source,
-        "patch_radius_mm": placement_config.patch_radius_mm,
+        "patch_radius_mm": active_placement_config.patch_radius_mm,
         "local_patch": local_patch.metadata,
         "chin_region": chin_region.metadata,
     }
@@ -189,7 +262,7 @@ def process_scan(
             source=mount_frame.source,
         ),
         mount_center_source=mount_center_source,
-        mount_patch_radius_mm=placement_config.patch_radius_mm,
+        mount_patch_radius_mm=active_placement_config.patch_radius_mm,
         chin_patch={
             "region": chin_region.metadata,
             "local_patch": local_patch.metadata,
@@ -205,6 +278,22 @@ def process_scan(
             saddle_height_mm=active_saddle_config.saddle_height_mm,
             validation=saddle_result.validation,
             mesh_stats=saddle_result.mesh_stats,
+            final_export_status=(
+                "reviewed" if review_data.approved else "unreviewed_preview"
+            ),
+        ),
+        review=ReviewModel(
+            approved=review_data.approved,
+            notes=review_data.notes,
+            override_source=review_resolution.override_source,
+            applied_fields=review_resolution.applied_fields,
+            source_path=review_data.source_path,
+        ),
+        diagnostics=saddle_result.debug["diagnostics"],
+        mount_asset=MountAssetModel(
+            type=mount_asset.type,
+            source=mount_asset.source,
+            warning=mount_asset.warning,
         ),
         output_dir=output_dir,
         aligned_mesh_path=exported_path,
@@ -255,3 +344,17 @@ def _canonical_symmetry_result(
         status=symmetry.status,
         message=symmetry.message,
     )
+
+
+def _resolve_float(
+    cli_value: Optional[float],
+    review_value: Optional[float],
+    default_value: float,
+) -> float:
+    """Resolve one numeric value with CLI > review > default precedence."""
+
+    if cli_value is not None:
+        return float(cli_value)
+    if review_value is not None:
+        return float(review_value)
+    return float(default_value)
