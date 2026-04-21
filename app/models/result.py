@@ -36,6 +36,16 @@ class AlignmentModel(BaseModel):
     transform_matrix: list[list[float]]
 
 
+class MountFrameModel(BaseModel):
+    """Serialized mount placement frame."""
+
+    origin: list[float]
+    x_axis: list[float]
+    y_axis: list[float]
+    z_axis: list[float]
+    source: str
+
+
 class PipelineResult(BaseModel):
     """Complete metadata for one processing run."""
 
@@ -50,7 +60,13 @@ class PipelineResult(BaseModel):
     input_mesh: MeshInfo
     symmetry: SymmetryPlaneModel
     alignment: AlignmentModel
+    mount_frame: MountFrameModel
+    mount_center_source: str
+    mount_patch_radius_mm: float
+    chin_patch: dict[str, Any]
     output_dir: Path
     aligned_mesh_path: Optional[Path]
+    mount_frame_path: Optional[Path]
+    chin_patch_points_path: Optional[Path]
     result_json_path: Path
     stages: list[PipelineStage]

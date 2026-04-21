@@ -22,3 +22,16 @@ class SymmetrySearchConfig:
 
 
 DEFAULT_SYMMETRY_CONFIG = SymmetrySearchConfig()
+
+
+@dataclass(frozen=True)
+class PlacementConfig:
+    """Configuration for mount placement feature extraction."""
+
+    patch_radius_mm: float = 35.0
+    center_band_mm: float = 8.0
+    front_percentile: float = 75.0
+    lower_percentile: float = 35.0
+
+
+DEFAULT_PLACEMENT_CONFIG = PlacementConfig()

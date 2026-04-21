@@ -6,8 +6,9 @@ from typing import Optional
 import typer
 from rich.console import Console
 from rich.table import Table
+import numpy as np
 
-from app.config import DEFAULT_SYMMETRY_CONFIG, SymmetrySearchConfig
+from app.config import DEFAULT_PLACEMENT_CONFIG, DEFAULT_SYMMETRY_CONFIG, PlacementConfig, SymmetrySearchConfig
 from app.pipeline import process_scan
 
 app = typer.Typer(
@@ -61,6 +62,27 @@ def process(
         min=0.1,
         help="Angular search step in degrees.",
     ),
+    patch_radius: float = typer.Option(
+        DEFAULT_PLACEMENT_CONFIG.patch_radius_mm,
+        "--patch-radius",
+        min=0.1,
+        help="Radius in millimeters for local mount patch extraction.",
+    ),
+    mount_center_x: Optional[float] = typer.Option(
+        None,
+        "--mount-center-x",
+        help="Override mount center X coordinate in aligned mesh coordinates.",
+    ),
+    mount_center_y: Optional[float] = typer.Option(
+        None,
+        "--mount-center-y",
+        help="Override mount center Y coordinate in aligned mesh coordinates.",
+    ),
+    mount_center_z: Optional[float] = typer.Option(
+        None,
+        "--mount-center-z",
+        help="Override mount center Z coordinate in aligned mesh coordinates.",
+    ),
 ) -> None:
     """Run the first-pass helmet scan processing pipeline."""
 
@@ -72,11 +94,24 @@ def process(
         offset_steps=DEFAULT_SYMMETRY_CONFIG.offset_steps,
         trim_ratio=DEFAULT_SYMMETRY_CONFIG.trim_ratio,
     )
+    placement_config = PlacementConfig(
+        patch_radius_mm=patch_radius,
+        center_band_mm=DEFAULT_PLACEMENT_CONFIG.center_band_mm,
+        front_percentile=DEFAULT_PLACEMENT_CONFIG.front_percentile,
+        lower_percentile=DEFAULT_PLACEMENT_CONFIG.lower_percentile,
+    )
+    mount_center_override = _parse_mount_center_override(
+        mount_center_x,
+        mount_center_y,
+        mount_center_z,
+    )
     result = process_scan(
         scan_path=scan_path,
         mount_id=mount,
         output_root=output_root,
         symmetry_config=symmetry_config,
+        placement_config=placement_config,
+        mount_center_override=mount_center_override,
     )
 
     table = Table(title="Process Result")
@@ -90,9 +125,28 @@ def process(
     table.add_row("Faces", str(result.mesh.face_count))
     table.add_row("Symmetry Score", f"{result.symmetry.score:.6g}")
     table.add_row("Symmetry Normal", str(result.symmetry.plane_normal))
+    table.add_row("Mount Center", str(result.mount_frame.origin))
+    table.add_row("Mount Center Source", result.mount_center_source)
     table.add_row("Aligned Mesh", str(result.aligned_mesh_path or "not exported"))
     table.add_row("Result JSON", str(result.result_json_path))
     console.print(table)
+
+
+def _parse_mount_center_override(
+    x: Optional[float],
+    y: Optional[float],
+    z: Optional[float],
+) -> Optional[np.ndarray]:
+    """Parse mount center override and require all coordinates together."""
+
+    values = [x, y, z]
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise typer.BadParameter(
+            "Provide all of --mount-center-x, --mount-center-y, and --mount-center-z.",
+        )
+    return np.array([x, y, z], dtype=float)
 
 
 if __name__ == "__main__":
