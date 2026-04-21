@@ -46,6 +46,21 @@ class MountFrameModel(BaseModel):
     source: str
 
 
+class SaddleModel(BaseModel):
+    """Serialized saddle generation metadata."""
+
+    generated: bool
+    preview_path: Optional[Path]
+    final_mount_path: Optional[Path]
+    debug_path: Optional[Path]
+    contact_offset_mm: float
+    footprint_width_mm: float
+    footprint_height_mm: float
+    saddle_height_mm: float
+    validation: dict[str, Any]
+    mesh_stats: dict[str, Any]
+
+
 class PipelineResult(BaseModel):
     """Complete metadata for one processing run."""
 
@@ -64,6 +79,7 @@ class PipelineResult(BaseModel):
     mount_center_source: str
     mount_patch_radius_mm: float
     chin_patch: dict[str, Any]
+    saddle: SaddleModel
     output_dir: Path
     aligned_mesh_path: Optional[Path]
     mount_frame_path: Optional[Path]

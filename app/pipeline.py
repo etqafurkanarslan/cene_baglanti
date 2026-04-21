@@ -17,6 +17,7 @@ from app.config import (
 from app.geometry.align import align_to_reference_frame
 from app.geometry.features import estimate_local_frame, estimate_mount_center
 from app.geometry.preprocess import load_mesh, summarize_mesh
+from app.geometry.saddle import SaddleConfig, generate_saddle
 from app.geometry.symmetry import SymmetryResult, estimate_symmetry_plane
 from app.models.helmet_scan import HelmetScan
 from app.models.mount_spec import MountSpec
@@ -25,6 +26,7 @@ from app.models.result import (
     MountFrameModel,
     PipelineResult,
     PipelineStage,
+    SaddleModel,
     SymmetryPlaneModel,
 )
 from app.utils.io import create_output_dir, export_mesh_as_stl, write_json
@@ -39,6 +41,7 @@ def process_scan(
     symmetry_config: SymmetrySearchConfig = DEFAULT_SYMMETRY_CONFIG,
     placement_config: PlacementConfig = DEFAULT_PLACEMENT_CONFIG,
     mount_center_override: Optional[np.ndarray] = None,
+    saddle_config: Optional[SaddleConfig] = None,
 ) -> PipelineResult:
     """Process a helmet scan mesh and persist first-pass run artifacts."""
 
@@ -79,9 +82,34 @@ def process_scan(
         f"Mount center: {_format_vector(mount_center)} "
         f"(source={mount_center_source}, patch_vertices={len(local_patch.vertex_indices)})"
     )
+    active_saddle_config = saddle_config or SaddleConfig(
+        patch_radius_mm=placement_config.patch_radius_mm,
+        mount_center_override=(
+            np.round(mount_center_override, 6).tolist()
+            if mount_center_override is not None
+            else None
+        ),
+    )
+    saddle_result = generate_saddle(
+        mount_frame=mount_frame,
+        local_patch=local_patch,
+        config=active_saddle_config,
+    )
+    console.log(
+        "Saddle generated: "
+        f"vertices={saddle_result.mesh_stats['final']['vertex_count']}, "
+        f"faces={saddle_result.mesh_stats['final']['face_count']}, "
+        f"watertight={saddle_result.validation['is_watertight']}"
+    )
 
     aligned_mesh_path = output_dir / "aligned_mesh.stl"
     exported_path = export_mesh_as_stl(alignment.mesh, aligned_mesh_path)
+    saddle_preview_path = output_dir / "saddle_preview.stl"
+    final_mount_path = output_dir / "final_mount.stl"
+    saddle_debug_path = output_dir / "saddle_debug.json"
+    export_mesh_as_stl(saddle_result.saddle_mesh, saddle_preview_path)
+    export_mesh_as_stl(saddle_result.final_mesh, final_mount_path)
+    write_json(saddle_debug_path, saddle_result.debug)
     mount_frame_path = output_dir / "mount_frame.json"
     chin_patch_points_path = output_dir / "chin_patch_points.json"
     mount_frame_payload = {
@@ -127,6 +155,11 @@ def process_scan(
             status="completed",
             message="Estimated mount center, local frame, and debug patch.",
         ),
+        PipelineStage(
+            name="saddle_generation",
+            status="completed",
+            message="Generated saddle preview, final mount mesh, and debug metadata.",
+        ),
     ]
 
     result_json_path = output_dir / "result.json"
@@ -161,6 +194,18 @@ def process_scan(
             "region": chin_region.metadata,
             "local_patch": local_patch.metadata,
         },
+        saddle=SaddleModel(
+            generated=True,
+            preview_path=saddle_preview_path,
+            final_mount_path=final_mount_path,
+            debug_path=saddle_debug_path,
+            contact_offset_mm=active_saddle_config.contact_offset_mm,
+            footprint_width_mm=active_saddle_config.footprint_width_mm,
+            footprint_height_mm=active_saddle_config.footprint_height_mm,
+            saddle_height_mm=active_saddle_config.saddle_height_mm,
+            validation=saddle_result.validation,
+            mesh_stats=saddle_result.mesh_stats,
+        ),
         output_dir=output_dir,
         aligned_mesh_path=exported_path,
         mount_frame_path=mount_frame_path,

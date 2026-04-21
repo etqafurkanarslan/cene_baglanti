@@ -8,8 +8,14 @@ from rich.console import Console
 from rich.table import Table
 import numpy as np
 
-from app.config import DEFAULT_PLACEMENT_CONFIG, DEFAULT_SYMMETRY_CONFIG, PlacementConfig, SymmetrySearchConfig
+from app.config import (
+    DEFAULT_PLACEMENT_CONFIG,
+    DEFAULT_SYMMETRY_CONFIG,
+    PlacementConfig,
+    SymmetrySearchConfig,
+)
 from app.pipeline import process_scan
+from app.geometry.saddle import SaddleConfig
 
 app = typer.Typer(
     help="Process helmet scan meshes for mount placement and saddle generation.",
@@ -83,6 +89,30 @@ def process(
         "--mount-center-z",
         help="Override mount center Z coordinate in aligned mesh coordinates.",
     ),
+    contact_offset: float = typer.Option(
+        SaddleConfig.contact_offset_mm,
+        "--contact-offset",
+        min=0.0,
+        help="Offset from sampled helmet patch to saddle contact surface.",
+    ),
+    footprint_width: float = typer.Option(
+        SaddleConfig.footprint_width_mm,
+        "--footprint-width",
+        min=1.0,
+        help="Saddle/mount footprint width in millimeters.",
+    ),
+    footprint_height: float = typer.Option(
+        SaddleConfig.footprint_height_mm,
+        "--footprint-height",
+        min=1.0,
+        help="Saddle/mount footprint height in millimeters.",
+    ),
+    saddle_height: float = typer.Option(
+        SaddleConfig.saddle_height_mm,
+        "--saddle-height",
+        min=0.1,
+        help="Height from contact support to top footprint in millimeters.",
+    ),
 ) -> None:
     """Run the first-pass helmet scan processing pipeline."""
 
@@ -105,6 +135,18 @@ def process(
         mount_center_y,
         mount_center_z,
     )
+    saddle_config = SaddleConfig(
+        contact_offset_mm=contact_offset,
+        footprint_width_mm=footprint_width,
+        footprint_height_mm=footprint_height,
+        saddle_height_mm=saddle_height,
+        patch_radius_mm=patch_radius,
+        mount_center_override=(
+            mount_center_override.round(6).tolist()
+            if mount_center_override is not None
+            else None
+        ),
+    )
     result = process_scan(
         scan_path=scan_path,
         mount_id=mount,
@@ -112,6 +154,7 @@ def process(
         symmetry_config=symmetry_config,
         placement_config=placement_config,
         mount_center_override=mount_center_override,
+        saddle_config=saddle_config,
     )
 
     table = Table(title="Process Result")
@@ -127,6 +170,8 @@ def process(
     table.add_row("Symmetry Normal", str(result.symmetry.plane_normal))
     table.add_row("Mount Center", str(result.mount_frame.origin))
     table.add_row("Mount Center Source", result.mount_center_source)
+    table.add_row("Saddle Preview", str(result.saddle.preview_path))
+    table.add_row("Final Mount", str(result.saddle.final_mount_path))
     table.add_row("Aligned Mesh", str(result.aligned_mesh_path or "not exported"))
     table.add_row("Result JSON", str(result.result_json_path))
     console.print(table)
