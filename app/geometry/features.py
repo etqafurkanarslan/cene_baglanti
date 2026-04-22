@@ -40,6 +40,17 @@ class MountFrame:
     y_axis: np.ndarray
     z_axis: np.ndarray
     source: str
+    metadata: dict[str, float | int | str] | None = None
+
+
+@dataclass(frozen=True)
+class MountCenterEstimate:
+    """Estimated mount center plus heuristic diagnostics."""
+
+    center: np.ndarray
+    source: str
+    chin_region: ChinRegion
+    metadata: dict[str, float | int | str | list[float]]
 
 
 def extract_chin_region(
@@ -98,18 +109,56 @@ def estimate_mount_center(
     strategy: CenterStrategy = "chin_region",
     config: PlacementConfig = DEFAULT_PLACEMENT_CONFIG,
     override: Optional[np.ndarray] = None,
-) -> tuple[np.ndarray, str, ChinRegion]:
+) -> MountCenterEstimate:
     """Estimate or override the mount center on a canonical helmet mesh."""
 
     _ = symmetry_result
     chin_region = extract_chin_region(mesh, config=config)
     if override is not None:
-        return np.asarray(override, dtype=float), "override", chin_region
+        center = np.asarray(override, dtype=float)
+        return MountCenterEstimate(
+            center=center,
+            source="override",
+            chin_region=chin_region,
+            metadata={
+                "candidate_count": int(len(chin_region.points)),
+                "selected_mount_center_world": np.round(center, 6).tolist(),
+                "selected_mount_center_local": [0.0, 0.0, 0.0],
+                "selection_method": "manual_override",
+            },
+        )
     if strategy != "chin_region":
         raise ValueError(f"Unsupported mount center strategy: {strategy}")
-    center = np.median(chin_region.points, axis=0)
+
+    frontier_threshold = float(np.percentile(chin_region.points[:, 1], 88.0))
+    frontier_mask = chin_region.points[:, 1] >= frontier_threshold
+    frontier_points = chin_region.points[frontier_mask]
+    if len(frontier_points) == 0:
+        frontier_points = chin_region.points
+    candidate_scores = _score_mount_center_candidates(frontier_points, config.center_band_mm)
+    top_count = max(1, min(24, int(np.ceil(len(frontier_points) * 0.05))))
+    ranked_indices = np.argsort(candidate_scores)[::-1]
+    top_points = frontier_points[ranked_indices[:top_count]]
+    center = np.mean(top_points, axis=0)
     center[0] = 0.0
-    return center, "auto_chin_region", chin_region
+    return MountCenterEstimate(
+        center=center,
+        source="auto_chin_region",
+        chin_region=chin_region,
+        metadata={
+            "candidate_count": int(len(chin_region.points)),
+            "frontier_candidate_count": int(len(frontier_points)),
+            "top_candidate_count": int(top_count),
+            "selected_mount_center_world": np.round(center, 6).tolist(),
+            "selected_mount_center_local": [0.0, 0.0, 0.0],
+            "selection_method": "frontier_first_centerline_weighted_top_mean",
+            "frontier_y_threshold": frontier_threshold,
+            "score_min": float(np.min(candidate_scores)),
+            "score_max": float(np.max(candidate_scores)),
+            "score_mean": float(np.mean(candidate_scores)),
+            "top_candidates_centroid": np.round(np.mean(top_points, axis=0), 6).tolist(),
+        },
+    )
 
 
 def estimate_local_frame(
@@ -125,13 +174,14 @@ def estimate_local_frame(
     if x_raw[0] < 0.0:
         x_raw = -x_raw
 
-    z_axis = _estimate_patch_normal(mesh, patch, mount_center)
+    z_axis, z_axis_outward_score = _estimate_patch_normal(mesh, patch, mount_center)
     x_axis = x_raw - np.dot(x_raw, z_axis) * z_axis
     if np.linalg.norm(x_axis) <= 1e-9:
         x_axis = _fallback_perpendicular_axis(z_axis)
     x_axis = _unit_vector(x_axis)
     y_axis = _unit_vector(np.cross(z_axis, x_axis))
     x_axis = _unit_vector(np.cross(y_axis, z_axis))
+    determinant = float(np.linalg.det(np.column_stack([x_axis, y_axis, z_axis])))
 
     return (
         MountFrame(
@@ -140,6 +190,11 @@ def estimate_local_frame(
             y_axis=y_axis,
             z_axis=z_axis,
             source="estimated_local_patch",
+            metadata={
+                "determinant": determinant,
+                "handedness": "right_handed" if determinant > 0 else "left_handed",
+                "z_axis_outward_score": float(z_axis_outward_score),
+            },
         ),
         patch,
     )
@@ -181,7 +236,7 @@ def _estimate_patch_normal(
     mesh: trimesh.Trimesh,
     patch: LocalPatch,
     mount_center: np.ndarray,
-) -> np.ndarray:
+) -> tuple[np.ndarray, float]:
     """Estimate and outward-orient a local patch normal."""
 
     normal = _normal_from_vertex_normals(mesh, patch)
@@ -193,9 +248,34 @@ def _estimate_patch_normal(
     normal = _unit_vector(normal)
     outward = np.asarray(mount_center, dtype=float) - _mesh_center(mesh)
     outward[0] = 0.0
-    if np.linalg.norm(outward) > 1e-9 and np.dot(normal, outward) < 0.0:
+    outward_score = float(np.dot(normal, outward))
+    if np.linalg.norm(outward) > 1e-9 and outward_score < 0.0:
         normal = -normal
-    return normal
+        outward_score = -outward_score
+    return normal, outward_score
+
+
+def _score_mount_center_candidates(points: np.ndarray, center_band_mm: float) -> np.ndarray:
+    """Score candidate chin points with front, low, and centered bias."""
+
+    x = np.abs(points[:, 0])
+    y = points[:, 1]
+    z = points[:, 2]
+    x_score = 1.0 - _normalize_vector(x)
+    y_score = _normalize_vector(y)
+    z_score = 1.0 - _normalize_vector(z)
+    center_bias = np.exp(-np.square(x / max(center_band_mm, 1.0)))
+    return 0.60 * y_score + 0.25 * z_score + 0.15 * np.maximum(x_score, center_bias)
+
+
+def _normalize_vector(values: np.ndarray) -> np.ndarray:
+    """Normalize vector into [0, 1] with constant-array handling."""
+
+    min_value = float(np.min(values))
+    max_value = float(np.max(values))
+    if max_value - min_value <= 1e-12:
+        return np.ones_like(values, dtype=float)
+    return (values - min_value) / (max_value - min_value)
 
 
 def _normal_from_vertex_normals(

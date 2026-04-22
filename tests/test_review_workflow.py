@@ -111,6 +111,14 @@ def test_diagnostics_and_real_mount_asset_are_written() -> None:
     assert debug["diagnostics"]["contact_point_count"] == result.diagnostics["contact_point_count"]
     assert debug["mount_asset"]["type"] == "real"
     assert debug["generated_profile_stats"]["contact_fit_method"] == "weighted_rbf"
+    for name in (
+        "mount_center_debug.json",
+        "patch_bounds_debug.json",
+        "frame_debug.json",
+        "placement_debug_top.png",
+        "placement_debug_perspective.png",
+    ):
+        assert (result.output_dir / name).exists()
 
 
 def test_missing_mount_asset_falls_back_to_placeholder() -> None:

@@ -14,11 +14,12 @@ from app.config import (
     PlacementConfig,
     SymmetrySearchConfig,
 )
+from app.exporters.placement_debug import export_placement_debug_images
 from app.geometry.align import align_to_reference_frame
 from app.geometry.features import estimate_local_frame, estimate_mount_center
 from app.geometry.mount_assets import resolve_mount_asset
 from app.geometry.preprocess import load_mesh, summarize_mesh
-from app.geometry.saddle import SaddleConfig, generate_saddle
+from app.geometry.saddle import SaddleConfig, build_mount_footprint, generate_saddle
 from app.geometry.symmetry import SymmetryResult, estimate_symmetry_plane
 from app.models.helmet_scan import HelmetScan
 from app.models.mount_spec import MountSpec
@@ -108,12 +109,15 @@ def process_scan(
     alignment = align_to_reference_frame(mesh, symmetry)
     canonical_symmetry = _canonical_symmetry_result(symmetry, alignment.transform)
 
-    mount_center, mount_center_source, chin_region = estimate_mount_center(
+    mount_center_estimate = estimate_mount_center(
         mesh=alignment.mesh,
         symmetry_result=canonical_symmetry,
         config=active_placement_config,
         override=resolved_mount_center_override,
     )
+    mount_center = mount_center_estimate.center
+    mount_center_source = mount_center_estimate.source
+    chin_region = mount_center_estimate.chin_region
     mount_frame, local_patch = estimate_local_frame(
         mesh=alignment.mesh,
         mount_center=mount_center,
@@ -202,6 +206,58 @@ def process_scan(
     write_json(saddle_debug_path, saddle_result.debug)
     mount_frame_path = output_dir / "mount_frame.json"
     chin_patch_points_path = output_dir / "chin_patch_points.json"
+    mount_center_debug_path = output_dir / "mount_center_debug.json"
+    patch_bounds_debug_path = output_dir / "patch_bounds_debug.json"
+    frame_debug_path = output_dir / "frame_debug.json"
+    footprint_world = _footprint_world(mount_frame, active_saddle_config)
+    top_plot_path, perspective_plot_path = export_placement_debug_images(
+        output_dir=output_dir,
+        chin_region_points=chin_region.points,
+        local_patch=local_patch,
+        mount_frame=mount_frame,
+        footprint_world=footprint_world,
+        asset_mesh=mount_asset.mesh,
+    )
+    write_json(
+        mount_center_debug_path,
+        {
+            **mount_center_estimate.metadata,
+            "mount_center_source": mount_center_source,
+            "chin_region_bounds": _bounds_payload(chin_region.points),
+        },
+    )
+    local_patch_local = _world_to_frame_local(local_patch.points, mount_frame)
+    write_json(
+        patch_bounds_debug_path,
+        {
+            "patch_radius_mm": active_placement_config.patch_radius_mm,
+            "patch_point_count": int(len(local_patch.points)),
+            "patch_bbox_world": _bounds_payload(local_patch.points),
+            "patch_bbox_local": _bounds_payload(local_patch_local),
+            "patch_centroid_world": _rounded_vector(np.mean(local_patch.points, axis=0)),
+            "patch_centroid_local": _rounded_vector(np.mean(local_patch_local, axis=0)),
+            "patch_normal_summary": {
+                "estimated_z_axis": _rounded_vector(mount_frame.z_axis),
+                "z_axis_outward_score": mount_frame.metadata.get("z_axis_outward_score")
+                if mount_frame.metadata
+                else None,
+            },
+        },
+    )
+    write_json(
+        frame_debug_path,
+        {
+            "origin": _rounded_vector(mount_frame.origin),
+            "x_axis": _rounded_vector(mount_frame.x_axis),
+            "y_axis": _rounded_vector(mount_frame.y_axis),
+            "z_axis": _rounded_vector(mount_frame.z_axis),
+            "determinant": mount_frame.metadata.get("determinant") if mount_frame.metadata else None,
+            "handedness": mount_frame.metadata.get("handedness") if mount_frame.metadata else None,
+            "z_axis_outward_score": mount_frame.metadata.get("z_axis_outward_score")
+            if mount_frame.metadata
+            else None,
+        },
+    )
     mount_frame_payload = {
         "origin": _rounded_vector(mount_frame.origin),
         "x_axis": _rounded_vector(mount_frame.x_axis),
@@ -212,6 +268,8 @@ def process_scan(
         "patch_radius_mm": active_placement_config.patch_radius_mm,
         "local_patch": local_patch.metadata,
         "chin_region": chin_region.metadata,
+        "placement_debug_top": str(top_plot_path),
+        "placement_debug_perspective": str(perspective_plot_path),
     }
     write_json(mount_frame_path, mount_frame_payload)
     write_json(
@@ -379,3 +437,32 @@ def _resolve_float(
     if review_value is not None:
         return float(review_value)
     return float(default_value)
+
+
+def _world_to_frame_local(points: np.ndarray, mount_frame) -> np.ndarray:
+    """Project world points into mount-frame local coordinates."""
+
+    basis = np.vstack([mount_frame.x_axis, mount_frame.y_axis, mount_frame.z_axis])
+    return (np.asarray(points, dtype=float) - mount_frame.origin) @ basis.T
+
+
+def _bounds_payload(points: np.ndarray) -> dict[str, list[float]]:
+    """Return rounded min/max bounds for a point cloud."""
+
+    values = np.asarray(points, dtype=float)
+    return {
+        "min": _rounded_vector(np.min(values, axis=0)),
+        "max": _rounded_vector(np.max(values, axis=0)),
+    }
+
+
+def _footprint_world(mount_frame, saddle_config: SaddleConfig) -> np.ndarray:
+    """Return world coordinates for the top footprint boundary."""
+
+    profile = build_mount_footprint(saddle_config)["profile"]
+    return (
+        mount_frame.origin
+        + profile[:, 0, np.newaxis] * mount_frame.x_axis
+        + profile[:, 1, np.newaxis] * mount_frame.y_axis
+        + profile[:, 2, np.newaxis] * mount_frame.z_axis
+    )

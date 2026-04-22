@@ -20,13 +20,17 @@ def test_mount_center_prefers_front_lower_chin_region() -> None:
         lower_percentile=35.0,
     )
 
-    center, source, chin_region = estimate_mount_center(mesh, symmetry, config=config)
+    estimate = estimate_mount_center(mesh, symmetry, config=config)
+    center = estimate.center
+    source = estimate.source
+    chin_region = estimate.chin_region
 
     assert source == "auto_chin_region"
     assert chin_region.metadata["vertex_count"] >= 3
     assert abs(center[0]) < 1e-10
     assert center[1] >= 8.0
     assert center[2] <= -4.0
+    assert estimate.metadata["selection_method"] == "frontier_first_centerline_weighted_top_mean"
 
 
 def test_local_frame_is_orthonormal() -> None:
@@ -50,6 +54,9 @@ def test_local_frame_is_orthonormal() -> None:
     assert np.isclose(np.dot(frame.x_axis, frame.y_axis), 0.0, atol=1e-8)
     assert np.isclose(np.dot(frame.x_axis, frame.z_axis), 0.0, atol=1e-8)
     assert np.isclose(np.dot(frame.y_axis, frame.z_axis), 0.0, atol=1e-8)
+    assert frame.metadata is not None
+    assert frame.metadata["handedness"] == "right_handed"
+    assert frame.metadata["z_axis_outward_score"] >= 0.0
 
 
 def _feature_test_mesh() -> trimesh.Trimesh:
