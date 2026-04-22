@@ -27,6 +27,7 @@ from app.models.result import (
     AlignmentModel,
     MountFrameModel,
     MountAssetModel,
+    PlacementModel,
     PipelineResult,
     PipelineStage,
     ReviewModel,
@@ -117,6 +118,8 @@ def process_scan(
     )
     mount_center = mount_center_estimate.center
     mount_center_source = mount_center_estimate.source
+    legacy_center = mount_center_estimate.legacy_center
+    chin_anchor_point = mount_center_estimate.anchor_point
     chin_region = mount_center_estimate.chin_region
     mount_frame, local_patch = estimate_local_frame(
         mesh=alignment.mesh,
@@ -207,15 +210,21 @@ def process_scan(
     mount_frame_path = output_dir / "mount_frame.json"
     chin_patch_points_path = output_dir / "chin_patch_points.json"
     mount_center_debug_path = output_dir / "mount_center_debug.json"
+    chin_anchor_debug_path = output_dir / "chin_anchor_debug.json"
     patch_bounds_debug_path = output_dir / "patch_bounds_debug.json"
     frame_debug_path = output_dir / "frame_debug.json"
     footprint_world = _footprint_world(mount_frame, active_saddle_config)
-    top_plot_path, perspective_plot_path = export_placement_debug_images(
+    top_plot_path, perspective_plot_path, anchor_plot_path = export_placement_debug_images(
         output_dir=output_dir,
         chin_region_points=chin_region.points,
+        centerline_band_points=mount_center_estimate.centerline_band_points,
+        frontier_band_points=mount_center_estimate.frontier_band_points,
         local_patch=local_patch,
         mount_frame=mount_frame,
         footprint_world=footprint_world,
+        legacy_center=legacy_center,
+        chin_anchor_point=chin_anchor_point,
+        final_center=mount_center,
         asset_mesh=mount_asset.mesh,
     )
     write_json(
@@ -223,7 +232,31 @@ def process_scan(
         {
             **mount_center_estimate.metadata,
             "mount_center_source": mount_center_source,
+            "legacy_mount_center": _rounded_vector(legacy_center),
+            "chin_anchor_point": _rounded_vector(chin_anchor_point),
+            "final_mount_center": _rounded_vector(mount_center),
             "chin_region_bounds": _bounds_payload(chin_region.points),
+        },
+    )
+    write_json(
+        chin_anchor_debug_path,
+        {
+            "centerline_band_count": int(len(mount_center_estimate.centerline_band_points)),
+            "frontier_band_count": int(len(mount_center_estimate.frontier_band_points)),
+            "candidate_count": int(chin_region.metadata["vertex_count"]),
+            "selected_anchor_point": _rounded_vector(chin_anchor_point),
+            "anchor_score": float(mount_center_estimate.anchor_score),
+            "anchor_source": mount_center_estimate.anchor_source,
+            "scoring_weights": {
+                "front_bias_weight": mount_center_estimate.metadata.get("front_bias_weight"),
+                "centerline_bias_weight": mount_center_estimate.metadata.get("centerline_bias_weight"),
+                "low_bias_weight": mount_center_estimate.metadata.get("low_bias_weight"),
+                "support_density_weight": mount_center_estimate.metadata.get("support_density_weight"),
+            },
+            "topk_candidates": np.round(mount_center_estimate.top_anchor_candidates, 6).tolist(),
+            "legacy_center": _rounded_vector(legacy_center),
+            "final_center": _rounded_vector(mount_center),
+            "anchor_delta_mm": float(np.linalg.norm(chin_anchor_point - legacy_center)),
         },
     )
     local_patch_local = _world_to_frame_local(local_patch.points, mount_frame)
@@ -265,6 +298,7 @@ def process_scan(
         "z_axis": _rounded_vector(mount_frame.z_axis),
         "source": mount_frame.source,
         "mount_center_source": mount_center_source,
+        "placement_anchor_plot": str(anchor_plot_path),
         "patch_radius_mm": active_placement_config.patch_radius_mm,
         "local_patch": local_patch.metadata,
         "chin_region": chin_region.metadata,
@@ -335,6 +369,15 @@ def process_scan(
             y_axis=_rounded_vector(mount_frame.y_axis),
             z_axis=_rounded_vector(mount_frame.z_axis),
             source=mount_frame.source,
+        ),
+        placement=PlacementModel(
+            anchor_point=_rounded_vector(chin_anchor_point),
+            anchor_method=str(mount_center_estimate.metadata.get("selection_method", "")),
+            anchor_source=mount_center_estimate.anchor_source,
+            anchor_score=float(mount_center_estimate.anchor_score),
+            legacy_center=_rounded_vector(legacy_center),
+            final_center=_rounded_vector(mount_center),
+            anchor_delta_mm=float(np.linalg.norm(chin_anchor_point - legacy_center)),
         ),
         mount_center_source=mount_center_source,
         mount_patch_radius_mm=active_placement_config.patch_radius_mm,

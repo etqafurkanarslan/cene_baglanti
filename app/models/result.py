@@ -46,6 +46,18 @@ class MountFrameModel(BaseModel):
     source: str
 
 
+class PlacementModel(BaseModel):
+    """Serialized placement anchor metadata."""
+
+    anchor_point: list[float]
+    anchor_method: str
+    anchor_source: str
+    anchor_score: float
+    legacy_center: list[float]
+    final_center: list[float]
+    anchor_delta_mm: float
+
+
 class SaddleModel(BaseModel):
     """Serialized saddle generation metadata."""
 
@@ -99,6 +111,7 @@ class PipelineResult(BaseModel):
     symmetry: SymmetryPlaneModel
     alignment: AlignmentModel
     mount_frame: MountFrameModel
+    placement: PlacementModel
     mount_center_source: str
     mount_patch_radius_mm: float
     chin_patch: dict[str, Any]

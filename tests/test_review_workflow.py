@@ -42,6 +42,8 @@ def test_review_json_overrides_are_applied() -> None:
     assert result.review.override_source == "review"
     assert result.review.notes == "review accepted"
     assert result.mount_frame.origin == [0.0, 1.0, -2.0]
+    assert result.placement.final_center == [0.0, 1.0, -2.0]
+    assert result.placement.anchor_source == "manual_override"
     assert result.mount_patch_radius_mm == 5.0
     assert result.saddle.contact_offset_mm == 1.1
     assert result.saddle.footprint_width_mm == 24.0
@@ -79,6 +81,7 @@ def test_cli_overrides_review_json() -> None:
     assert result.review.applied_fields["footprint_width_mm"] == "cli"
     assert result.review.applied_fields["contact_offset_mm"] == "review"
     assert result.mount_frame.origin == [0.0, 3.0, -1.0]
+    assert result.placement.final_center == [0.0, 3.0, -1.0]
     assert result.saddle.footprint_width_mm == 30.0
     assert result.saddle.contact_offset_mm == 0.2
 
@@ -113,9 +116,11 @@ def test_diagnostics_and_real_mount_asset_are_written() -> None:
     assert debug["generated_profile_stats"]["contact_fit_method"] == "weighted_rbf"
     for name in (
         "mount_center_debug.json",
+        "chin_anchor_debug.json",
         "patch_bounds_debug.json",
         "frame_debug.json",
         "placement_debug_top.png",
+        "placement_anchor_plot.png",
         "placement_debug_perspective.png",
     ):
         assert (result.output_dir / name).exists()

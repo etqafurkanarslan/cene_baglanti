@@ -13,17 +13,30 @@ from app.geometry.features import LocalPatch, MountFrame
 def export_placement_debug_images(
     output_dir: Path,
     chin_region_points: np.ndarray,
+    centerline_band_points: np.ndarray,
+    frontier_band_points: np.ndarray,
     local_patch: LocalPatch,
     mount_frame: MountFrame,
     footprint_world: np.ndarray,
+    legacy_center: np.ndarray,
+    chin_anchor_point: np.ndarray,
+    final_center: np.ndarray,
     asset_mesh: trimesh.Trimesh | None = None,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, Path]:
     """Export top and perspective PNG debug views."""
 
     top_path = output_dir / "placement_debug_top.png"
     perspective_path = output_dir / "placement_debug_perspective.png"
+    anchor_path = output_dir / "placement_anchor_plot.png"
 
-    top_scene = _collect_scene_points(chin_region_points, local_patch.points, footprint_world, asset_mesh)
+    top_scene = _collect_scene_points(
+        chin_region_points,
+        centerline_band_points,
+        frontier_band_points,
+        local_patch.points,
+        footprint_world,
+        asset_mesh,
+    )
     perspective_scene = top_scene
 
     top_image = _render_projection(
@@ -38,13 +51,26 @@ def export_placement_debug_images(
         projection="perspective",
         footprint_world=footprint_world,
     )
+    anchor_image = _render_projection(
+        scene_points=top_scene,
+        mount_frame=mount_frame,
+        projection="top",
+        footprint_world=footprint_world,
+        legacy_center=legacy_center,
+        chin_anchor_point=chin_anchor_point,
+        final_center=final_center,
+        show_centerline=True,
+    )
     _write_png(top_path, top_image)
     _write_png(perspective_path, perspective_image)
-    return top_path, perspective_path
+    _write_png(anchor_path, anchor_image)
+    return top_path, perspective_path, anchor_path
 
 
 def _collect_scene_points(
     chin_region_points: np.ndarray,
+    centerline_band_points: np.ndarray,
+    frontier_band_points: np.ndarray,
     patch_points: np.ndarray,
     footprint_world: np.ndarray,
     asset_mesh: trimesh.Trimesh | None,
@@ -54,6 +80,8 @@ def _collect_scene_points(
     asset_points = np.asarray(asset_mesh.vertices, dtype=float) if asset_mesh is not None else np.empty((0, 3))
     return {
         "chin_region": _decimate(chin_region_points, 4000),
+        "centerline_band": _decimate(centerline_band_points, 3000),
+        "frontier_band": _decimate(frontier_band_points, 2000),
         "patch": _decimate(patch_points, 4000),
         "footprint": footprint_world,
         "asset": _decimate(asset_points, 2000),
@@ -65,6 +93,10 @@ def _render_projection(
     mount_frame: MountFrame,
     projection: str,
     footprint_world: np.ndarray,
+    legacy_center: np.ndarray | None = None,
+    chin_anchor_point: np.ndarray | None = None,
+    final_center: np.ndarray | None = None,
+    show_centerline: bool = False,
     width: int = 1400,
     height: int = 1000,
 ) -> np.ndarray:
@@ -96,6 +128,8 @@ def _render_projection(
 
     for name, color in (
         ("chin_region", np.array([170, 170, 170], dtype=np.uint8)),
+        ("centerline_band", np.array([220, 190, 80], dtype=np.uint8)),
+        ("frontier_band", np.array([255, 120, 120], dtype=np.uint8)),
         ("patch", np.array([60, 150, 255], dtype=np.uint8)),
         ("asset", np.array([150, 80, 180], dtype=np.uint8)),
     ):
@@ -114,8 +148,33 @@ def _render_projection(
             center_pixel + (vector_2d * 80.0).astype(int),
             color,
         )
+    if show_centerline:
+        x0 = _to_pixels(np.array([[0.0, projected[:, 1].min()]], dtype=float), scale, offset, height)[0]
+        x1 = _to_pixels(np.array([[0.0, projected[:, 1].max()]], dtype=float), scale, offset, height)[0]
+        _draw_line(canvas, x0, x1, np.array([90, 90, 90], dtype=np.uint8))
+    _draw_marker(canvas, project_fn, scale, offset, height, legacy_center, np.array([220, 60, 60], dtype=np.uint8), 8)
+    _draw_marker(canvas, project_fn, scale, offset, height, chin_anchor_point, np.array([255, 0, 200], dtype=np.uint8), 7)
+    _draw_marker(canvas, project_fn, scale, offset, height, final_center, np.array([255, 120, 0], dtype=np.uint8), 6)
 
     return canvas
+
+
+def _draw_marker(
+    canvas: np.ndarray,
+    project_fn,
+    scale: float,
+    offset: np.ndarray,
+    height: int,
+    point: np.ndarray | None,
+    color: np.ndarray,
+    radius: int,
+) -> None:
+    if point is None:
+        return
+    pixel = _to_pixels(project_fn(np.asarray([point], dtype=float)), scale, offset, height)[0]
+    _draw_disc(canvas, pixel, radius, color)
+    _draw_line(canvas, pixel + np.array([-radius - 2, 0]), pixel + np.array([radius + 2, 0]), color)
+    _draw_line(canvas, pixel + np.array([0, -radius - 2]), pixel + np.array([0, radius + 2]), color)
 
 
 def _project_perspective(points: np.ndarray) -> np.ndarray:

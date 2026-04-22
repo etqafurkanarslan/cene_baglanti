@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 import numpy as np
+from scipy.spatial import cKDTree
 import trimesh
 
 from app.config import DEFAULT_PLACEMENT_CONFIG, PlacementConfig
@@ -14,6 +15,11 @@ FRONTIER_PERCENTILE = 88.0
 FRONT_BIAS_WEIGHT = 0.60
 LOW_BIAS_WEIGHT = 0.25
 CENTERLINE_BIAS_WEIGHT = 0.15
+ANCHOR_FRONT_BIAS_WEIGHT = 0.45
+ANCHOR_CENTERLINE_WEIGHT = 0.25
+ANCHOR_NOT_TOO_LOW_WEIGHT = 0.20
+ANCHOR_SUPPORT_DENSITY_WEIGHT = 0.10
+ANCHOR_TOPK_LIMIT = 16
 
 
 @dataclass(frozen=True)
@@ -55,6 +61,13 @@ class MountCenterEstimate:
     source: str
     chin_region: ChinRegion
     metadata: dict[str, float | int | str | list[float]]
+    anchor_point: np.ndarray
+    anchor_source: str
+    anchor_score: float
+    legacy_center: np.ndarray
+    centerline_band_points: np.ndarray
+    frontier_band_points: np.ndarray
+    top_anchor_candidates: np.ndarray
 
 
 def extract_chin_region(
@@ -118,6 +131,8 @@ def estimate_mount_center(
 
     _ = symmetry_result
     chin_region = extract_chin_region(mesh, config=config)
+    legacy_center, legacy_metadata = _compute_legacy_mount_center(chin_region.points, config.center_band_mm)
+    anchor = _compute_chin_anchor(chin_region.points, config.center_band_mm)
     if override is not None:
         center = np.asarray(override, dtype=float)
         return MountCenterEstimate(
@@ -126,46 +141,73 @@ def estimate_mount_center(
             chin_region=chin_region,
             metadata={
                 "candidate_count": int(len(chin_region.points)),
+                "centerline_band_count": int(len(anchor["centerline_band_points"])),
+                "frontier_candidate_count": int(len(anchor["frontier_points"])),
+                "top_candidate_count": int(len(anchor["top_candidates"])),
                 "selected_mount_center_world": np.round(center, 6).tolist(),
                 "selected_mount_center_local": [0.0, 0.0, 0.0],
                 "selection_method": "manual_override",
+                "legacy_mount_center": np.round(legacy_center, 6).tolist(),
+                "chin_anchor_point": np.round(anchor["anchor_point"], 6).tolist(),
+                "chin_anchor_score": float(anchor["anchor_score"]),
+                "chin_anchor_source": "auto_chin_anchor",
+                "anchor_delta_mm": float(np.linalg.norm(anchor["anchor_point"] - legacy_center)),
+                "frontier_percentile": FRONTIER_PERCENTILE,
+                "front_bias_weight": ANCHOR_FRONT_BIAS_WEIGHT,
+                "low_bias_weight": ANCHOR_NOT_TOO_LOW_WEIGHT,
+                "centerline_bias_weight": ANCHOR_CENTERLINE_WEIGHT,
+                "support_density_weight": ANCHOR_SUPPORT_DENSITY_WEIGHT,
+                "legacy_selection_method": legacy_metadata["selection_method"],
             },
+            anchor_point=center,
+            anchor_source="manual_override",
+            anchor_score=float(anchor["anchor_score"]),
+            legacy_center=legacy_center,
+            centerline_band_points=anchor["centerline_band_points"],
+            frontier_band_points=anchor["frontier_points"],
+            top_anchor_candidates=anchor["top_candidates"],
         )
     if strategy != "chin_region":
         raise ValueError(f"Unsupported mount center strategy: {strategy}")
 
-    frontier_threshold = float(np.percentile(chin_region.points[:, 1], FRONTIER_PERCENTILE))
-    frontier_mask = chin_region.points[:, 1] >= frontier_threshold
-    frontier_points = chin_region.points[frontier_mask]
-    if len(frontier_points) == 0:
-        frontier_points = chin_region.points
-    candidate_scores = _score_mount_center_candidates(frontier_points, config.center_band_mm)
-    top_count = max(1, min(24, int(np.ceil(len(frontier_points) * 0.05))))
-    ranked_indices = np.argsort(candidate_scores)[::-1]
-    top_points = frontier_points[ranked_indices[:top_count]]
-    center = np.mean(top_points, axis=0)
-    center[0] = 0.0
+    center = np.asarray(anchor["anchor_point"], dtype=float)
     return MountCenterEstimate(
         center=center,
-        source="auto_chin_region",
+        source="auto_chin_anchor",
         chin_region=chin_region,
         metadata={
             "candidate_count": int(len(chin_region.points)),
-            "frontier_candidate_count": int(len(frontier_points)),
-            "top_candidate_count": int(top_count),
+            "centerline_band_count": int(len(anchor["centerline_band_points"])),
+            "frontier_candidate_count": int(len(anchor["frontier_points"])),
+            "top_candidate_count": int(len(anchor["top_candidates"])),
             "selected_mount_center_world": np.round(center, 6).tolist(),
             "selected_mount_center_local": [0.0, 0.0, 0.0],
-            "selection_method": "frontier_first_centerline_weighted_top_mean",
+            "selection_method": "chin_anchor_frontier_centerline_density_top_mean",
+            "legacy_selection_method": legacy_metadata["selection_method"],
+            "legacy_mount_center": np.round(legacy_center, 6).tolist(),
+            "chin_anchor_point": np.round(anchor["anchor_point"], 6).tolist(),
+            "chin_anchor_score": float(anchor["anchor_score"]),
+            "chin_anchor_source": "auto_chin_anchor",
+            "anchor_delta_mm": float(np.linalg.norm(anchor["anchor_point"] - legacy_center)),
             "frontier_percentile": FRONTIER_PERCENTILE,
-            "frontier_y_threshold": frontier_threshold,
-            "front_bias_weight": FRONT_BIAS_WEIGHT,
-            "low_bias_weight": LOW_BIAS_WEIGHT,
-            "centerline_bias_weight": CENTERLINE_BIAS_WEIGHT,
-            "score_min": float(np.min(candidate_scores)),
-            "score_max": float(np.max(candidate_scores)),
-            "score_mean": float(np.mean(candidate_scores)),
-            "top_candidates_centroid": np.round(np.mean(top_points, axis=0), 6).tolist(),
+            "frontier_y_threshold": float(anchor["frontier_threshold"]),
+            "front_bias_weight": ANCHOR_FRONT_BIAS_WEIGHT,
+            "low_bias_weight": ANCHOR_NOT_TOO_LOW_WEIGHT,
+            "centerline_bias_weight": ANCHOR_CENTERLINE_WEIGHT,
+            "support_density_weight": ANCHOR_SUPPORT_DENSITY_WEIGHT,
+            "score_min": float(anchor["score_min"]),
+            "score_max": float(anchor["score_max"]),
+            "score_mean": float(anchor["score_mean"]),
+            "top_candidates_centroid": np.round(np.mean(anchor["top_candidates"], axis=0), 6).tolist(),
+            "top_candidates": np.round(anchor["top_candidates"], 6).tolist(),
         },
+        anchor_point=np.asarray(anchor["anchor_point"], dtype=float),
+        anchor_source="auto_chin_anchor",
+        anchor_score=float(anchor["anchor_score"]),
+        legacy_center=legacy_center,
+        centerline_band_points=anchor["centerline_band_points"],
+        frontier_band_points=anchor["frontier_points"],
+        top_anchor_candidates=anchor["top_candidates"],
     )
 
 
@@ -278,6 +320,100 @@ def _score_mount_center_candidates(points: np.ndarray, center_band_mm: float) ->
         + LOW_BIAS_WEIGHT * z_score
         + CENTERLINE_BIAS_WEIGHT * np.maximum(x_score, center_bias)
     )
+
+
+def _compute_legacy_mount_center(
+    points: np.ndarray,
+    center_band_mm: float,
+) -> tuple[np.ndarray, dict[str, float | int | str]]:
+    """Preserve the previous center heuristic for comparison/debugging."""
+
+    frontier_threshold = float(np.percentile(points[:, 1], FRONTIER_PERCENTILE))
+    frontier_mask = points[:, 1] >= frontier_threshold
+    frontier_points = points[frontier_mask]
+    if len(frontier_points) == 0:
+        frontier_points = points
+    candidate_scores = _score_mount_center_candidates(frontier_points, center_band_mm)
+    top_count = max(1, min(24, int(np.ceil(len(frontier_points) * 0.05))))
+    ranked_indices = np.argsort(candidate_scores)[::-1]
+    top_points = frontier_points[ranked_indices[:top_count]]
+    center = np.mean(top_points, axis=0)
+    center[0] = 0.0
+    return center, {
+        "selection_method": "frontier_first_centerline_weighted_top_mean",
+        "frontier_candidate_count": int(len(frontier_points)),
+        "top_candidate_count": int(top_count),
+        "frontier_y_threshold": frontier_threshold,
+        "score_min": float(np.min(candidate_scores)),
+        "score_max": float(np.max(candidate_scores)),
+        "score_mean": float(np.mean(candidate_scores)),
+    }
+
+
+def _compute_chin_anchor(points: np.ndarray, center_band_mm: float) -> dict[str, np.ndarray | float]:
+    """Select a chin anchor at the front-center supportable region."""
+
+    centerline_mask = np.abs(points[:, 0]) <= center_band_mm
+    centerline_points = points[centerline_mask]
+    if len(centerline_points) == 0:
+        relaxed_band = max(center_band_mm * 1.5, center_band_mm + 1.0)
+        centerline_mask = np.abs(points[:, 0]) <= relaxed_band
+        centerline_points = points[centerline_mask]
+    if len(centerline_points) == 0:
+        centerline_points = points
+
+    frontier_threshold = float(np.percentile(centerline_points[:, 1], FRONTIER_PERCENTILE))
+    frontier_mask = centerline_points[:, 1] >= frontier_threshold
+    frontier_points = centerline_points[frontier_mask]
+    if len(frontier_points) == 0:
+        frontier_points = centerline_points
+
+    scores = _score_anchor_candidates(frontier_points, center_band_mm)
+    top_count = max(1, min(ANCHOR_TOPK_LIMIT, int(np.ceil(len(frontier_points) * 0.08))))
+    ranked_indices = np.argsort(scores)[::-1]
+    top_points = frontier_points[ranked_indices[:top_count]]
+    anchor_point = np.mean(top_points, axis=0)
+    anchor_point[0] = 0.0
+    return {
+        "anchor_point": anchor_point,
+        "anchor_score": float(np.mean(scores[ranked_indices[:top_count]])),
+        "centerline_band_points": centerline_points,
+        "frontier_points": frontier_points,
+        "top_candidates": top_points,
+        "frontier_threshold": frontier_threshold,
+        "score_min": float(np.min(scores)),
+        "score_max": float(np.max(scores)),
+        "score_mean": float(np.mean(scores)),
+    }
+
+
+def _score_anchor_candidates(points: np.ndarray, center_band_mm: float) -> np.ndarray:
+    """Score anchor candidates with front, centerline, height, and support density bias."""
+
+    x = np.abs(points[:, 0])
+    y = points[:, 1]
+    z = points[:, 2]
+    centerline_bias = np.exp(-np.square(x / max(center_band_mm, 1.0)))
+    front_score = _normalize_vector(y)
+    not_too_low_score = _normalize_vector(z)
+    density_score = _local_density_score(points)
+    return (
+        ANCHOR_FRONT_BIAS_WEIGHT * front_score
+        + ANCHOR_CENTERLINE_WEIGHT * centerline_bias
+        + ANCHOR_NOT_TOO_LOW_WEIGHT * not_too_low_score
+        + ANCHOR_SUPPORT_DENSITY_WEIGHT * density_score
+    )
+
+
+def _local_density_score(points: np.ndarray) -> np.ndarray:
+    """Estimate local support suitability from neighborhood density."""
+
+    if len(points) <= 1:
+        return np.ones(len(points), dtype=float)
+    radius = max(4.0, min(8.0, float(np.ptp(points[:, 1]) * 0.15)))
+    tree = cKDTree(points)
+    counts = np.array([len(tree.query_ball_point(point, radius)) for point in points], dtype=float)
+    return _normalize_vector(counts)
 
 
 def _normalize_vector(values: np.ndarray) -> np.ndarray:
