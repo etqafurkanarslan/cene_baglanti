@@ -10,12 +10,13 @@ import numpy as np
 import trimesh
 
 from app.geometry.preprocess import load_mesh
-from app.ui.schemas import SavedSelectionModel, UIReviewModel, UIReviewPayload
+from app.ui.schemas import PlacementModel, PlacementPayload, SavedSelectionModel, UIReviewModel, UIReviewPayload
 from app.utils.io import write_json
 
 SELECTION_FILENAME = "surface_selection.json"
 UI_REVIEW_FILENAME = "ui_review.json"
 EFFECTIVE_REVIEW_FILENAME = "effective_review.json"
+PLACEMENT_FILENAME = "placement.json"
 
 
 def load_selection(case_dir: Path) -> Optional[SavedSelectionModel]:
@@ -51,6 +52,25 @@ def save_ui_review(case_dir: Path, payload: UIReviewPayload) -> Path:
     """Persist a UI review payload."""
 
     path = case_dir / UI_REVIEW_FILENAME
+    write_json(path, payload.model_dump(mode="json"))
+    return path
+
+
+def load_placement(case_dir: Path) -> Optional[PlacementModel]:
+    """Load saved adapter placement when present."""
+
+    path = case_dir / PLACEMENT_FILENAME
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    payload["source_path"] = str(path)
+    return PlacementModel(**payload)
+
+
+def save_placement(case_dir: Path, payload: PlacementPayload) -> Path:
+    """Persist adapter placement payload."""
+
+    path = case_dir / PLACEMENT_FILENAME
     write_json(path, payload.model_dump(mode="json"))
     return path
 
@@ -128,6 +148,10 @@ def copy_ui_inputs_to_output(case_dir: Path, new_output_dir: Path) -> None:
         if source.exists():
             target = new_output_dir / filename
             target.write_text(source.read_text(encoding="utf-8-sig"), encoding="utf-8")
+    placement_source = case_dir / PLACEMENT_FILENAME
+    if placement_source.exists():
+        placement_target = new_output_dir / PLACEMENT_FILENAME
+        placement_target.write_text(placement_source.read_text(encoding="utf-8-sig"), encoding="utf-8")
 
 
 def _safe_unit_vector(vector: np.ndarray) -> np.ndarray:
@@ -137,4 +161,3 @@ def _safe_unit_vector(vector: np.ndarray) -> np.ndarray:
     if norm <= 1e-12:
         return np.array([0.0, 0.0, 1.0], dtype=float)
     return np.asarray(vector, dtype=float) / norm
-

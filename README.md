@@ -119,20 +119,23 @@ Then open `http://127.0.0.1:8000`.
 Workflow:
 
 1. Load a processed case from `outputs/`
-2. Inspect the aligned helmet mesh and overlays
-3. Click faces in include/exclude mode to mark the seating region
-4. Use move-center mode to click a manual center when needed
-5. Save `surface_selection.json` and `ui_review.json`
+2. Inspect the aligned helmet mesh, mount ghost, axes, and projected footprint
+3. Click on the helmet to place the adapter center
+4. Adjust yaw, pitch, roll, offset, and footprint margin
+5. Save `placement.json` and `ui_review.json`
 6. Regenerate to create updated saddle outputs
+7. Optionally use include/exclude masks as secondary guidance
 
 Saved UI files:
 
+- `placement.json`
 - `surface_selection.json`
 - `ui_review.json`
 - `effective_review.json`
 
 Override precedence during regeneration:
 
+- UI adapter placement
 - UI surface selection centroid
 - manual UI mount center override
 - `review.json` / `ui_review.json` numeric fields
@@ -140,6 +143,7 @@ Override precedence during regeneration:
 
 Known UI limits:
 
-- V1 uses click-based face selection, not brush sculpting
-- surface selection currently influences regeneration via selection centroid, not a full custom patch fit
+- V1 uses click-to-place and numeric rotation/offset controls, not a full CAD gizmo
+- projected footprint preview is approximate and derived from nearest helmet vertices
+- surface selection remains optional and secondary
 - the frontend loads Three.js from a CDN

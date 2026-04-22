@@ -9,7 +9,7 @@ from typing import Optional
 
 from app.config import DEFAULT_OUTPUT_ROOT
 from app.ui.schemas import CaseDetailModel, CaseSummaryModel
-from app.ui.selection_store import load_selection, load_ui_review
+from app.ui.selection_store import load_placement, load_selection, load_ui_review
 
 
 @dataclass(frozen=True)
@@ -82,9 +82,11 @@ def build_case_detail(case: ProcessedCase) -> CaseDetailModel:
 
     result = load_result(case)
     selection = load_selection(case.output_dir)
+    placement = load_placement(case.output_dir)
     ui_review = load_ui_review(case.output_dir)
     artifact_urls = {
         "mesh": f"/api/cases/{case.case_id}/mesh",
+        "mount_asset_mesh": f"/api/cases/{case.case_id}/mount-asset-mesh",
         "result": f"/api/cases/{case.case_id}/artifacts/result.json",
         "mount_frame": f"/api/cases/{case.case_id}/artifacts/mount_frame.json",
         "chin_patch": f"/api/cases/{case.case_id}/artifacts/chin_patch_points.json",
@@ -97,6 +99,7 @@ def build_case_detail(case: ProcessedCase) -> CaseDetailModel:
         case_id=case.case_id,
         output_dir=case.output_dir,
         result=result,
+        placement=placement,
         selection=selection,
         ui_review=ui_review,
         artifact_urls=artifact_urls,
@@ -118,4 +121,3 @@ def maybe_find_previous_review(case: ProcessedCase) -> Optional[Path]:
 
     candidate = case.output_dir / "review.json"
     return candidate if candidate.exists() else None
-

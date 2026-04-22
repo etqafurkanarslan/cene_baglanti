@@ -76,19 +76,33 @@ def build_placeholder_mount(
 ) -> trimesh.Trimesh:
     """Build the current oval mount placeholder."""
 
+    local_mesh = build_placeholder_mount_local(config)
+    return transform_mount_asset_to_frame(local_mesh, mount_frame)
+
+
+def build_placeholder_mount_local(config: SaddleConfig) -> trimesh.Trimesh:
+    """Build placeholder mount geometry in mount-local coordinates."""
+
     sample_count = max(12, int(config.profile_samples))
     angles = np.linspace(0.0, 2.0 * np.pi, sample_count, endpoint=False)
     half_width = config.footprint_width_mm * 0.5
     half_height = config.footprint_height_mm * 0.5
-    bottom_z = config.saddle_height_mm
-    top_z = config.saddle_height_mm + max(config.wall_thickness_mm, 0.5)
+    bottom_z = 0.0
+    top_z = max(config.wall_thickness_mm, 0.5)
     bottom = np.column_stack(
         [half_width * np.cos(angles), half_height * np.sin(angles), np.full(sample_count, bottom_z)]
     )
     top = np.column_stack(
         [half_width * np.cos(angles), half_height * np.sin(angles), np.full(sample_count, top_z)]
     )
-    mesh, _ = loft_or_bridge_between_profiles(mount_frame, top, bottom)
+    local_frame = MountFrame(
+        origin=np.array([0.0, 0.0, 0.0], dtype=float),
+        x_axis=np.array([1.0, 0.0, 0.0], dtype=float),
+        y_axis=np.array([0.0, 1.0, 0.0], dtype=float),
+        z_axis=np.array([0.0, 0.0, 1.0], dtype=float),
+        source="placeholder_local",
+    )
+    mesh, _ = loft_or_bridge_between_profiles(local_frame, top, bottom)
     return mesh
 
 

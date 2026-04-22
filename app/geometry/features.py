@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 import numpy as np
 from scipy.spatial import cKDTree
+from scipy.spatial.transform import Rotation
 import trimesh
 
 from app.config import DEFAULT_PLACEMENT_CONFIG, PlacementConfig
@@ -244,6 +245,53 @@ def estimate_local_frame(
                 "determinant": determinant,
                 "handedness": "right_handed" if determinant > 0 else "left_handed",
                 "z_axis_outward_score": float(z_axis_outward_score),
+            },
+        ),
+        patch,
+    )
+
+
+def estimate_mount_frame_from_placement(
+    mesh: trimesh.Trimesh,
+    contact_center: np.ndarray,
+    symmetry_result: SymmetryResult,
+    patch_radius_mm: float,
+    rotation_euler_deg: np.ndarray | None = None,
+    mount_offset_mm: float = 0.0,
+) -> tuple[MountFrame, LocalPatch]:
+    """Estimate a mount frame from a user-placed contact center and local rotations."""
+
+    base_frame, patch = estimate_local_frame(
+        mesh=mesh,
+        mount_center=np.asarray(contact_center, dtype=float),
+        symmetry_result=symmetry_result,
+        patch_radius_mm=patch_radius_mm,
+    )
+    euler = np.asarray(rotation_euler_deg if rotation_euler_deg is not None else [0.0, 0.0, 0.0], dtype=float)
+    basis = np.column_stack([base_frame.x_axis, base_frame.y_axis, base_frame.z_axis])
+    rotation_matrix = Rotation.from_euler("xyz", euler, degrees=True).as_matrix()
+    rotated_basis = basis @ rotation_matrix
+    x_axis = _unit_vector(rotated_basis[:, 0])
+    y_axis = _unit_vector(rotated_basis[:, 1])
+    z_axis = _unit_vector(rotated_basis[:, 2])
+    origin = np.asarray(contact_center, dtype=float) + z_axis * float(mount_offset_mm)
+    determinant = float(np.linalg.det(np.column_stack([x_axis, y_axis, z_axis])))
+    return (
+        MountFrame(
+            origin=origin,
+            x_axis=x_axis,
+            y_axis=y_axis,
+            z_axis=z_axis,
+            source="ui_placement",
+            metadata={
+                "determinant": determinant,
+                "handedness": "right_handed" if determinant > 0 else "left_handed",
+                "z_axis_outward_score": float(base_frame.metadata.get("z_axis_outward_score", 0.0))
+                if base_frame.metadata
+                else 0.0,
+                "contact_center": np.round(np.asarray(contact_center, dtype=float), 6).tolist(),
+                "mount_rotation_euler_deg": np.round(euler, 6).tolist(),
+                "mount_offset_mm": float(mount_offset_mm),
             },
         ),
         patch,

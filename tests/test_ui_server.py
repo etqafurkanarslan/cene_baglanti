@@ -33,30 +33,39 @@ def test_ui_lists_and_loads_cases() -> None:
 
     mesh = client.get(f"/api/cases/{case_id}/mesh")
     assert mesh.status_code == 200
+    mount_asset = client.get(f"/api/cases/{case_id}/mount-asset-mesh")
+    assert mount_asset.status_code == 200
 
 
 def test_ui_selection_review_and_regenerate() -> None:
-    """The UI API should persist selection/review and regenerate outputs."""
+    """The UI API should persist placement/review and regenerate outputs."""
 
     output_root = _build_case_root("regenerate_case")
     app = create_app(output_root=output_root)
     client = TestClient(app)
     case_id = client.get("/api/cases").json()[0]["case_id"]
 
-    selection_response = client.post(
-        f"/api/cases/{case_id}/selection",
-        json={"included_face_ids": [0, 1], "excluded_face_ids": [1]},
+    placement_response = client.post(
+        f"/api/cases/{case_id}/placement",
+        json={
+            "case_id": case_id,
+            "mount_center": [0.0, 2.0, -1.0],
+            "mount_rotation_euler_deg": [0.0, 0.0, 15.0],
+            "mount_offset_mm": 1.5,
+            "footprint_margin_mm": 3.0,
+            "contact_offset_mm": 0.8,
+            "wall_thickness_mm": 2.5,
+            "notes": "ui placement",
+        },
     )
-    assert selection_response.status_code == 200
-    selection_payload = selection_response.json()
-    assert selection_payload["selected_point_count"] > 0
-    assert Path(output_root / case_id / "surface_selection.json").exists()
+    assert placement_response.status_code == 200
+    assert placement_response.json()["mount_offset_mm"] == 1.5
+    assert Path(output_root / case_id / "placement.json").exists()
 
     review_response = client.post(
         f"/api/cases/{case_id}/review",
         json={
             "approved": True,
-            "mount_center_override": [0.0, 1.0, -2.0],
             "patch_radius_mm": 5.0,
             "notes": "ui review",
         },
@@ -72,8 +81,9 @@ def test_ui_selection_review_and_regenerate() -> None:
     assert Path(regenerate_payload["generated_files"]["result_json"]).exists()
     new_case_id = regenerate_payload["new_case_id"]
     new_result = json.loads((output_root / new_case_id / "result.json").read_text(encoding="utf-8"))
-    assert new_result["mount_center_source"] == "override"
-    assert (output_root / new_case_id / "surface_selection.json").exists()
+    assert new_result["mount_center_source"] == "ui_placement"
+    assert new_result["mount_frame"]["source"] == "ui_placement"
+    assert (output_root / new_case_id / "placement.json").exists()
 
 
 def _build_case_root(name: str) -> Path:

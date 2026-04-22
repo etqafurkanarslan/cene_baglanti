@@ -44,6 +44,27 @@ class UIReviewModel(UIReviewPayload):
     source_path: Optional[Path] = None
 
 
+class PlacementPayload(BaseModel):
+    """Incoming adapter placement payload."""
+
+    case_id: Optional[str] = None
+    mount_asset_path: Optional[str] = None
+    mount_center: list[float]
+    mount_rotation_euler_deg: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
+    mount_offset_mm: float = 0.0
+    projection_direction_mode: str = "frame-z-negative"
+    footprint_margin_mm: float = 2.0
+    contact_offset_mm: Optional[float] = None
+    wall_thickness_mm: Optional[float] = None
+    notes: str = ""
+
+
+class PlacementModel(PlacementPayload):
+    """Persisted placement payload."""
+
+    source_path: Optional[Path] = None
+
+
 class CaseSummaryModel(BaseModel):
     """Top-level case list entry."""
 
@@ -64,6 +85,7 @@ class CaseDetailModel(BaseModel):
     case_id: str
     output_dir: Path
     result: dict[str, Any]
+    placement: Optional[PlacementModel]
     selection: Optional[SavedSelectionModel]
     ui_review: Optional[UIReviewModel]
     artifact_urls: dict[str, str]
@@ -79,4 +101,3 @@ class RegenerateResponseModel(BaseModel):
     previous_diagnostics: dict[str, Any]
     new_diagnostics: dict[str, Any]
     generated_files: dict[str, str]
-

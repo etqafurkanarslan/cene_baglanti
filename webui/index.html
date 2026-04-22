@@ -17,16 +17,16 @@
     <main class="main-panel">
       <section class="viewer-panel">
         <div class="toolbar">
-          <label>Selection mode
+          <label>Interaction
             <select id="selectionMode">
-              <option value="include">include</option>
-              <option value="exclude">exclude</option>
-              <option value="move-center">move center</option>
+              <option value="place-adapter">place adapter</option>
+              <option value="include">include mask</option>
+              <option value="exclude">exclude mask</option>
             </select>
           </label>
           <label><input type="checkbox" id="wireframeToggle"> wireframe</label>
           <button id="clearSelection">Clear selection</button>
-          <button id="centerFromSelection">Center from selection</button>
+          <button id="centerFromSelection">Use mask centroid</button>
           <button id="saveSelection">Save selection</button>
         </div>
         <div id="viewer"></div>
@@ -43,11 +43,21 @@
             <pre id="selectionSummary">No selection.</pre>
           </div>
           <div class="card">
+            <h2>Adapter Placement</h2>
+            <label>Center X <input id="centerX" type="number" step="0.01"></label>
+            <label>Center Y <input id="centerY" type="number" step="0.01"></label>
+            <label>Center Z <input id="centerZ" type="number" step="0.01"></label>
+            <label>Yaw <input id="yawDeg" type="number" step="0.1"></label>
+            <label>Pitch <input id="pitchDeg" type="number" step="0.1"></label>
+            <label>Roll <input id="rollDeg" type="number" step="0.1"></label>
+            <label>Offset <input id="mountOffset" type="number" step="0.1"></label>
+            <label>Footprint margin <input id="footprintMargin" type="number" step="0.1"></label>
+            <label>Wall thickness <input id="wallThickness" type="number" step="0.1"></label>
+            <button id="savePlacement">Save placement</button>
+          </div>
+          <div class="card">
             <h2>Review</h2>
             <label><input type="checkbox" id="approved"> approved</label>
-            <label>Manual center X <input id="centerX" type="number" step="0.01"></label>
-            <label>Manual center Y <input id="centerY" type="number" step="0.01"></label>
-            <label>Manual center Z <input id="centerZ" type="number" step="0.01"></label>
             <label>Patch radius <input id="patchRadius" type="number" step="0.1"></label>
             <label>Contact offset <input id="contactOffset" type="number" step="0.1"></label>
             <label>Footprint width <input id="footprintWidth" type="number" step="0.1"></label>
@@ -77,4 +87,3 @@
   <script type="module" src="/app.js"></script>
 </body>
 </html>
-

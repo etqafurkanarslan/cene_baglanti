@@ -22,6 +22,14 @@ export async function saveReview(caseId, payload) {
   });
 }
 
+export async function savePlacement(caseId, payload) {
+  return fetchJson(`/api/cases/${encodeURIComponent(caseId)}/placement`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function regenerate(caseId) {
   return fetchJson(`/api/cases/${encodeURIComponent(caseId)}/regenerate`, {
     method: "POST",
@@ -35,4 +43,3 @@ async function fetchJson(url, options = {}) {
   }
   return response.json();
 }
-

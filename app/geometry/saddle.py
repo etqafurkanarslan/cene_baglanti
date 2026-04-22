@@ -17,6 +17,7 @@ class SaddleConfig:
     contact_offset_mm: float = 0.6
     footprint_width_mm: float = 42.0
     footprint_height_mm: float = 32.0
+    footprint_margin_mm: float = 2.0
     saddle_height_mm: float = 8.0
     wall_thickness_mm: float = 3.0
     profile_samples: int = 48
@@ -91,6 +92,10 @@ def generate_saddle(
             **patch_surface["metadata"],
             **profile_stats,
         },
+        "projected_footprint_world": np.round(
+            _local_to_world(patch_surface["profile"], mount_frame),
+            6,
+        ).tolist(),
         "mesh_stats": mesh_stats,
         "validation": validation,
         "diagnostics": diagnostics,
@@ -158,7 +163,12 @@ def build_patch_support_surface(
     top_profile = build_mount_footprint(config)["profile"]
 
     # Slightly larger contact boundary gives the saddle a stable lower lip.
-    bottom_xy = top_profile[:, :2] * 1.08
+    bottom_xy = _expand_footprint_xy(
+        top_profile[:, :2],
+        config.footprint_width_mm,
+        config.footprint_height_mm,
+        config.footprint_margin_mm,
+    )
     fit = fit_contact_surface(patch_local, method=config.contact_fit_method)
     sample = sample_contact_surface(fit, bottom_xy)
     bottom_z = sample["z"] + config.contact_offset_mm
@@ -184,6 +194,7 @@ def build_patch_support_surface(
             "contact_fit_method": fit["method"],
             "contact_fit_k": fit["k"],
             "contact_smoothing_passes": int(config.smoothing_passes),
+            "footprint_margin_mm": float(config.footprint_margin_mm),
         },
     }
 
@@ -421,6 +432,22 @@ def _validated_sample_count(profile_samples: int) -> int:
     """Clamp profile sample count to a practical minimum."""
 
     return max(12, int(profile_samples))
+
+
+def _expand_footprint_xy(
+    xy: np.ndarray,
+    width_mm: float,
+    height_mm: float,
+    margin_mm: float,
+) -> np.ndarray:
+    """Expand an oval footprint by a simple axis-aligned margin."""
+
+    scale_x = (max(width_mm * 0.5, 1e-6) + margin_mm) / max(width_mm * 0.5, 1e-6)
+    scale_y = (max(height_mm * 0.5, 1e-6) + margin_mm) / max(height_mm * 0.5, 1e-6)
+    expanded = np.asarray(xy, dtype=float).copy()
+    expanded[:, 0] *= scale_x
+    expanded[:, 1] *= scale_y
+    return expanded
 
 
 def _smooth_circular(values: np.ndarray) -> np.ndarray:

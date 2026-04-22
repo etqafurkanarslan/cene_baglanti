@@ -16,13 +16,18 @@ from app.config import (
 )
 from app.exporters.placement_debug import export_placement_debug_images
 from app.geometry.align import align_to_reference_frame
-from app.geometry.features import estimate_local_frame, estimate_mount_center
+from app.geometry.features import (
+    estimate_local_frame,
+    estimate_mount_center,
+    estimate_mount_frame_from_placement,
+)
 from app.geometry.mount_assets import resolve_mount_asset
 from app.geometry.preprocess import load_mesh, summarize_mesh
 from app.geometry.saddle import SaddleConfig, build_mount_footprint, generate_saddle
 from app.geometry.symmetry import SymmetryResult, estimate_symmetry_plane
 from app.models.helmet_scan import HelmetScan
 from app.models.mount_spec import MountSpec
+from app.models.placement import PlacementOverride
 from app.models.result import (
     AlignmentModel,
     MountFrameModel,
@@ -58,6 +63,7 @@ def process_scan(
     contact_fit_method: Optional[str] = None,
     contact_smoothing_passes: Optional[int] = None,
     mount_asset_origin_mode: str = "mount-local",
+    placement_override: Optional[PlacementOverride] = None,
 ) -> PipelineResult:
     """Process a helmet scan mesh and persist first-pass run artifacts."""
 
@@ -86,7 +92,9 @@ def process_scan(
         },
     )
     resolved_mount_center_override = (
-        mount_center_override
+        placement_override.mount_center
+        if placement_override is not None
+        else mount_center_override
         if mount_center_override is not None
         else center_to_array(review_data.mount_center_override)
     )
@@ -114,19 +122,57 @@ def process_scan(
         mesh=alignment.mesh,
         symmetry_result=canonical_symmetry,
         config=active_placement_config,
-        override=resolved_mount_center_override,
+        override=None if placement_override is not None else resolved_mount_center_override,
     )
-    mount_center = mount_center_estimate.center
-    mount_center_source = mount_center_estimate.source
-    legacy_center = mount_center_estimate.legacy_center
-    chin_anchor_point = mount_center_estimate.anchor_point
     chin_region = mount_center_estimate.chin_region
-    mount_frame, local_patch = estimate_local_frame(
-        mesh=alignment.mesh,
-        mount_center=mount_center,
-        symmetry_result=canonical_symmetry,
-        patch_radius_mm=active_placement_config.patch_radius_mm,
-    )
+    if placement_override is not None:
+        contact_center = np.asarray(placement_override.mount_center, dtype=float)
+        mount_frame, local_patch = estimate_mount_frame_from_placement(
+            mesh=alignment.mesh,
+            contact_center=contact_center,
+            symmetry_result=canonical_symmetry,
+            patch_radius_mm=active_placement_config.patch_radius_mm,
+            rotation_euler_deg=placement_override.mount_rotation_euler_deg,
+            mount_offset_mm=placement_override.mount_offset_mm,
+        )
+        mount_center = mount_frame.origin
+        mount_center_source = "ui_placement"
+        legacy_center = mount_center_estimate.legacy_center
+        chin_anchor_point = contact_center
+        mount_center_estimate = mount_center_estimate.__class__(
+            center=mount_center,
+            source="ui_placement",
+            chin_region=chin_region,
+            metadata={
+                **mount_center_estimate.metadata,
+                "selection_method": "ui_adapter_placement",
+                "legacy_mount_center": np.round(legacy_center, 6).tolist(),
+                "chin_anchor_point": np.round(contact_center, 6).tolist(),
+                "final_mount_center": np.round(mount_center, 6).tolist(),
+                "mount_rotation_euler_deg": np.round(placement_override.mount_rotation_euler_deg, 6).tolist(),
+                "mount_offset_mm": float(placement_override.mount_offset_mm),
+                "projection_direction_mode": placement_override.projection_direction_mode,
+                "footprint_margin_mm": float(placement_override.footprint_margin_mm),
+            },
+            anchor_point=contact_center,
+            anchor_source="ui_placement",
+            anchor_score=1.0,
+            legacy_center=legacy_center,
+            centerline_band_points=mount_center_estimate.centerline_band_points,
+            frontier_band_points=mount_center_estimate.frontier_band_points,
+            top_anchor_candidates=mount_center_estimate.top_anchor_candidates,
+        )
+    else:
+        mount_center = mount_center_estimate.center
+        mount_center_source = mount_center_estimate.source
+        legacy_center = mount_center_estimate.legacy_center
+        chin_anchor_point = mount_center_estimate.anchor_point
+        mount_frame, local_patch = estimate_local_frame(
+            mesh=alignment.mesh,
+            mount_center=mount_center,
+            symmetry_result=canonical_symmetry,
+            patch_radius_mm=active_placement_config.patch_radius_mm,
+        )
     console.log(
         f"Mount center: {_format_vector(mount_center)} "
         f"(source={mount_center_source}, patch_vertices={len(local_patch.vertex_indices)})"
@@ -148,12 +194,21 @@ def process_scan(
             review_data.footprint_height_mm,
             base_saddle_config.footprint_height_mm,
         ),
+        footprint_margin_mm=(
+            float(placement_override.footprint_margin_mm)
+            if placement_override is not None
+            else base_saddle_config.footprint_margin_mm
+        ),
         saddle_height_mm=_resolve_float(
             saddle_height_override,
             review_data.saddle_height_mm,
             base_saddle_config.saddle_height_mm,
         ),
-        wall_thickness_mm=base_saddle_config.wall_thickness_mm,
+        wall_thickness_mm=(
+            float(placement_override.wall_thickness_mm)
+            if placement_override is not None and placement_override.wall_thickness_mm is not None
+            else base_saddle_config.wall_thickness_mm
+        ),
         profile_samples=base_saddle_config.profile_samples,
         patch_decimation_limit=base_saddle_config.patch_decimation_limit,
         smoothing_passes=(
@@ -171,6 +226,13 @@ def process_scan(
         patch_radius_mm=active_placement_config.patch_radius_mm,
         notes=review_data.notes,
     )
+    if placement_override is not None and placement_override.contact_offset_mm is not None:
+        active_saddle_config = SaddleConfig(
+            **{
+                **active_saddle_config.__dict__,
+                "contact_offset_mm": float(placement_override.contact_offset_mm),
+            }
+        )
     mount_asset = resolve_mount_asset(
         mount_frame,
         active_saddle_config,
@@ -257,6 +319,17 @@ def process_scan(
             "legacy_center": _rounded_vector(legacy_center),
             "final_center": _rounded_vector(mount_center),
             "anchor_delta_mm": float(np.linalg.norm(chin_anchor_point - legacy_center)),
+            "placement_override": (
+                {
+                    "mount_center": _rounded_vector(placement_override.mount_center),
+                    "mount_rotation_euler_deg": _rounded_vector(placement_override.mount_rotation_euler_deg),
+                    "mount_offset_mm": float(placement_override.mount_offset_mm),
+                    "projection_direction_mode": placement_override.projection_direction_mode,
+                    "footprint_margin_mm": float(placement_override.footprint_margin_mm),
+                }
+                if placement_override is not None
+                else None
+            ),
         },
     )
     local_patch_local = _world_to_frame_local(local_patch.points, mount_frame)

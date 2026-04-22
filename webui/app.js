@@ -1,4 +1,4 @@
-import { fetchCase, fetchCases, regenerate, saveReview, saveSelection } from "./api.js";
+import { fetchCase, fetchCases, regenerate, savePlacement, saveReview, saveSelection } from "./api.js";
 import { MeshViewer } from "./mesh_viewer.js";
 import { SelectionState } from "./selection_tools.js";
 
@@ -6,6 +6,7 @@ const state = {
   currentCase: null,
   currentCaseDetail: null,
   selection: new SelectionState(),
+  placement: null,
 };
 
 const elements = {
@@ -19,6 +20,12 @@ const elements = {
   centerX: document.getElementById("centerX"),
   centerY: document.getElementById("centerY"),
   centerZ: document.getElementById("centerZ"),
+  yawDeg: document.getElementById("yawDeg"),
+  pitchDeg: document.getElementById("pitchDeg"),
+  rollDeg: document.getElementById("rollDeg"),
+  mountOffset: document.getElementById("mountOffset"),
+  footprintMargin: document.getElementById("footprintMargin"),
+  wallThickness: document.getElementById("wallThickness"),
   patchRadius: document.getElementById("patchRadius"),
   contactOffset: document.getElementById("contactOffset"),
   footprintWidth: document.getElementById("footprintWidth"),
@@ -37,7 +44,6 @@ document.getElementById("clearSelection").addEventListener("click", () => {
   state.selection.clear();
   viewer.setSelection(state.selection);
   updateSelectionSummary();
-  populateReviewForm();
 });
 document.getElementById("centerFromSelection").addEventListener("click", async () => {
   if (!state.currentCase) {
@@ -45,15 +51,34 @@ document.getElementById("centerFromSelection").addEventListener("click", async (
   }
   const saved = await saveSelection(state.currentCase.case_id, state.selection.toPayload());
   if (saved.selection_centroid) {
-    state.selection.setManualCenter(saved.selection_centroid);
-    viewer.setSelection(state.selection);
-    populateReviewForm();
+    setPlacementCenter(saved.selection_centroid);
     updateSelectionSummary(saved);
   }
 });
 document.getElementById("saveSelection").addEventListener("click", handleSaveSelection);
+document.getElementById("savePlacement").addEventListener("click", handleSavePlacement);
 document.getElementById("saveReview").addEventListener("click", handleSaveReview);
 document.getElementById("regenerate").addEventListener("click", handleRegenerate);
+
+for (const element of [
+  elements.centerX,
+  elements.centerY,
+  elements.centerZ,
+  elements.yawDeg,
+  elements.pitchDeg,
+  elements.rollDeg,
+  elements.mountOffset,
+  elements.footprintMargin,
+]) {
+  element.addEventListener("input", () => {
+    if (!state.currentCaseDetail) {
+      return;
+    }
+    state.placement = readPlacementForm();
+    viewer.updatePlacementPreview(state.placement, state.currentCaseDetail.result);
+    updateSelectionSummary();
+  });
+}
 
 viewer.renderer.domElement.addEventListener("click", (event) => {
   if (!state.currentCaseDetail) {
@@ -64,12 +89,11 @@ viewer.renderer.domElement.addEventListener("click", (event) => {
     return;
   }
   const mode = elements.selectionMode.value;
-  if (mode === "move-center") {
-    state.selection.setManualCenter(hit.point);
-    populateReviewForm();
-  } else {
-    state.selection.applyFace(hit.faceId, mode);
+  if (mode === "place-adapter") {
+    setPlacementCenter(hit.point);
+    return;
   }
+  state.selection.applyFace(hit.faceId, mode);
   viewer.setSelection(state.selection);
   updateSelectionSummary();
 });
@@ -92,15 +116,13 @@ async function loadCase(caseId) {
     state.currentCaseDetail.selection.included_face_ids?.forEach((id) => state.selection.includedFaceIds.add(id));
     state.currentCaseDetail.selection.excluded_face_ids?.forEach((id) => state.selection.excludedFaceIds.add(id));
   }
-  if (state.currentCaseDetail.ui_review?.mount_center_override) {
-    state.selection.setManualCenter(state.currentCaseDetail.ui_review.mount_center_override);
-  }
+  state.placement = derivePlacement(state.currentCaseDetail);
   renderCaseList(await fetchCases());
-  await viewer.loadCase(state.currentCaseDetail);
+  await viewer.loadCase(state.currentCaseDetail, state.placement);
   viewer.setSelection(state.selection);
   updateCaseSummary();
   updateSelectionSummary(state.currentCaseDetail.selection);
-  populateReviewForm();
+  populateForms();
 }
 
 function renderCaseList(cases) {
@@ -121,8 +143,8 @@ function updateCaseSummary() {
     case_id: state.currentCaseDetail.case_id,
     scan: result.scan.path,
     output_dir: state.currentCaseDetail.output_dir,
-    auto_center: result.mount_frame.origin,
-    anchor: result.placement,
+    current_mount_frame: result.mount_frame,
+    placement: state.placement,
     diagnostics: result.diagnostics,
   }, null, 2);
 }
@@ -131,29 +153,34 @@ function updateSelectionSummary(savedSelection = null) {
   const payload = savedSelection || {
     included_face_ids: [...state.selection.includedFaceIds],
     excluded_face_ids: [...state.selection.excludedFaceIds],
-    selection_centroid: state.selection.manualCenter,
   };
   elements.selectionSummary.textContent = JSON.stringify({
+    interaction: elements.selectionMode.value,
+    placement: state.placement,
     included_face_count: payload.included_face_ids?.length ?? state.selection.includedFaceIds.size,
     excluded_face_count: payload.excluded_face_ids?.length ?? state.selection.excludedFaceIds.size,
-    selection_centroid: payload.selection_centroid ?? null,
-    manual_center: state.selection.manualCenter,
   }, null, 2);
 }
 
-function populateReviewForm() {
+function populateForms() {
   const review = state.currentCaseDetail?.ui_review || {};
   elements.approved.checked = Boolean(review.approved);
-  const center = state.selection.manualCenter || review.mount_center_override || [];
-  elements.centerX.value = center[0] ?? "";
-  elements.centerY.value = center[1] ?? "";
-  elements.centerZ.value = center[2] ?? "";
   elements.patchRadius.value = review.patch_radius_mm ?? "";
   elements.contactOffset.value = review.contact_offset_mm ?? "";
   elements.footprintWidth.value = review.footprint_width_mm ?? "";
   elements.footprintHeight.value = review.footprint_height_mm ?? "";
   elements.saddleHeight.value = review.saddle_height_mm ?? "";
   elements.reviewNotes.value = review.notes ?? "";
+
+  elements.centerX.value = state.placement.mount_center[0] ?? "";
+  elements.centerY.value = state.placement.mount_center[1] ?? "";
+  elements.centerZ.value = state.placement.mount_center[2] ?? "";
+  elements.pitchDeg.value = state.placement.mount_rotation_euler_deg[0] ?? 0;
+  elements.rollDeg.value = state.placement.mount_rotation_euler_deg[1] ?? 0;
+  elements.yawDeg.value = state.placement.mount_rotation_euler_deg[2] ?? 0;
+  elements.mountOffset.value = state.placement.mount_offset_mm ?? 0;
+  elements.footprintMargin.value = state.placement.footprint_margin_mm ?? 2;
+  elements.wallThickness.value = state.placement.wall_thickness_mm ?? "";
 }
 
 async function handleSaveSelection() {
@@ -164,14 +191,31 @@ async function handleSaveSelection() {
   updateSelectionSummary(saved);
 }
 
+async function handleSavePlacement() {
+  if (!state.currentCase) {
+    return;
+  }
+  state.placement = readPlacementForm();
+  const payload = {
+    case_id: state.currentCase.case_id,
+    mount_asset_path: state.currentCaseDetail.result.mount_asset?.source ?? null,
+    ...state.placement,
+    notes: elements.reviewNotes.value,
+  };
+  const saved = await savePlacement(state.currentCase.case_id, payload);
+  state.currentCaseDetail.placement = saved;
+  viewer.updatePlacementPreview(state.placement, state.currentCaseDetail.result);
+  updateSelectionSummary();
+}
+
 async function handleSaveReview() {
   if (!state.currentCase) {
     return;
   }
   const payload = {
     approved: elements.approved.checked,
-    mount_center_override: readManualCenter(),
-    selection_file: "surface_selection.json",
+    mount_center_override: null,
+    selection_file: state.selection.includedFaceIds.size ? "surface_selection.json" : null,
     patch_radius_mm: readNumber(elements.patchRadius.value),
     contact_offset_mm: readNumber(elements.contactOffset.value),
     footprint_width_mm: readNumber(elements.footprintWidth.value),
@@ -181,7 +225,6 @@ async function handleSaveReview() {
   };
   const saved = await saveReview(state.currentCase.case_id, payload);
   state.currentCaseDetail.ui_review = saved;
-  populateReviewForm();
 }
 
 async function handleRegenerate() {
@@ -189,15 +232,64 @@ async function handleRegenerate() {
     return;
   }
   await handleSaveSelection();
+  await handleSavePlacement();
   await handleSaveReview();
   const response = await regenerate(state.currentCase.case_id);
   elements.compareSummary.textContent = JSON.stringify(response, null, 2);
   await loadCase(response.new_case_id);
 }
 
-function readManualCenter() {
-  const values = [elements.centerX.value, elements.centerY.value, elements.centerZ.value].map(readNumber);
-  return values.every((value) => value !== null) ? values : null;
+function derivePlacement(caseDetail) {
+  const placement = caseDetail.placement;
+  if (placement) {
+    return {
+      mount_center: [...placement.mount_center],
+      mount_rotation_euler_deg: [...placement.mount_rotation_euler_deg],
+      mount_offset_mm: placement.mount_offset_mm,
+      projection_direction_mode: placement.projection_direction_mode,
+      footprint_margin_mm: placement.footprint_margin_mm,
+      contact_offset_mm: placement.contact_offset_mm,
+      wall_thickness_mm: placement.wall_thickness_mm,
+    };
+  }
+  return {
+    mount_center: [...caseDetail.result.mount_frame.origin],
+    mount_rotation_euler_deg: [0, 0, 0],
+    mount_offset_mm: 0,
+    projection_direction_mode: "frame-z-negative",
+    footprint_margin_mm: 2,
+    contact_offset_mm: caseDetail.result.saddle.contact_offset_mm,
+    wall_thickness_mm: 3,
+  };
+}
+
+function setPlacementCenter(point) {
+  state.placement.mount_center = [...point];
+  elements.centerX.value = point[0];
+  elements.centerY.value = point[1];
+  elements.centerZ.value = point[2];
+  viewer.updatePlacementPreview(state.placement, state.currentCaseDetail.result);
+  updateSelectionSummary();
+}
+
+function readPlacementForm() {
+  return {
+    mount_center: [
+      readNumber(elements.centerX.value) ?? state.placement?.mount_center?.[0] ?? 0,
+      readNumber(elements.centerY.value) ?? state.placement?.mount_center?.[1] ?? 0,
+      readNumber(elements.centerZ.value) ?? state.placement?.mount_center?.[2] ?? 0,
+    ],
+    mount_rotation_euler_deg: [
+      readNumber(elements.pitchDeg.value) ?? 0,
+      readNumber(elements.rollDeg.value) ?? 0,
+      readNumber(elements.yawDeg.value) ?? 0,
+    ],
+    mount_offset_mm: readNumber(elements.mountOffset.value) ?? 0,
+    projection_direction_mode: "frame-z-negative",
+    footprint_margin_mm: readNumber(elements.footprintMargin.value) ?? 2,
+    contact_offset_mm: readNumber(elements.contactOffset.value),
+    wall_thickness_mm: readNumber(elements.wallThickness.value),
+  };
 }
 
 function readNumber(value) {

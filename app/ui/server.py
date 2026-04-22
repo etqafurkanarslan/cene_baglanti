@@ -9,10 +9,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import DEFAULT_OUTPUT_ROOT, PROJECT_ROOT
+from app.geometry.mount_assets import build_placeholder_mount_local
+from app.geometry.saddle import SaddleConfig
 from app.ui.regeneration import regenerate_case
 from app.ui.schemas import (
     CaseDetailModel,
     CaseSummaryModel,
+    PlacementModel,
+    PlacementPayload,
     RegenerateResponseModel,
     SavedSelectionModel,
     SelectionPayload,
@@ -21,8 +25,10 @@ from app.ui.schemas import (
 )
 from app.ui.selection_store import (
     build_selection_from_faces,
+    load_placement,
     load_selection,
     load_ui_review,
+    save_placement,
     save_selection,
     save_ui_review,
 )
@@ -54,6 +60,27 @@ def create_app(output_root: Path = DEFAULT_OUTPUT_ROOT) -> FastAPI:
         try:
             case = get_case(case_id, app.state.output_root)
             mesh_path = resolve_artifact_path(case, "aligned_mesh.stl")
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(mesh_path, media_type="model/stl", filename=mesh_path.name)
+
+    @app.get("/api/cases/{case_id}/mount-asset-mesh")
+    def get_case_mount_asset_mesh(case_id: str) -> FileResponse:
+        try:
+            case = get_case(case_id, app.state.output_root)
+            detail = build_case_detail(case)
+            mount_asset = detail.result.get("mount_asset", {})
+            if mount_asset.get("type") == "real":
+                mesh_path = Path(mount_asset["source"])
+            else:
+                mesh_path = case.output_dir / "_ui_placeholder_mount.stl"
+                if not mesh_path.exists():
+                    config = SaddleConfig(
+                        footprint_width_mm=float(detail.result["saddle"]["footprint_width_mm"]),
+                        footprint_height_mm=float(detail.result["saddle"]["footprint_height_mm"]),
+                        wall_thickness_mm=3.0,
+                    )
+                    build_placeholder_mount_local(config).export(mesh_path)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return FileResponse(mesh_path, media_type="model/stl", filename=mesh_path.name)
@@ -93,6 +120,18 @@ def create_app(output_root: Path = DEFAULT_OUTPUT_ROOT) -> FastAPI:
             raise HTTPException(status_code=500, detail="Failed to persist UI review.")
         return stored
 
+    @app.post("/api/cases/{case_id}/placement", response_model=PlacementModel)
+    def save_case_placement(case_id: str, payload: PlacementPayload) -> PlacementModel:
+        try:
+            case = get_case(case_id, app.state.output_root)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        save_placement(case.output_dir, payload)
+        stored = load_placement(case.output_dir)
+        if stored is None:
+            raise HTTPException(status_code=500, detail="Failed to persist placement.")
+        return stored
+
     @app.post("/api/cases/{case_id}/regenerate", response_model=RegenerateResponseModel)
     def regenerate_case_endpoint(case_id: str) -> RegenerateResponseModel:
         try:
@@ -112,4 +151,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("app.ui.server:app", host="127.0.0.1", port=8000, reload=False)
-
