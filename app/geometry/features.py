@@ -10,6 +10,10 @@ from app.config import DEFAULT_PLACEMENT_CONFIG, PlacementConfig
 from app.geometry.symmetry import SymmetryResult
 
 CenterStrategy = Literal["chin_region"]
+FRONTIER_PERCENTILE = 88.0
+FRONT_BIAS_WEIGHT = 0.60
+LOW_BIAS_WEIGHT = 0.25
+CENTERLINE_BIAS_WEIGHT = 0.15
 
 
 @dataclass(frozen=True)
@@ -130,7 +134,7 @@ def estimate_mount_center(
     if strategy != "chin_region":
         raise ValueError(f"Unsupported mount center strategy: {strategy}")
 
-    frontier_threshold = float(np.percentile(chin_region.points[:, 1], 88.0))
+    frontier_threshold = float(np.percentile(chin_region.points[:, 1], FRONTIER_PERCENTILE))
     frontier_mask = chin_region.points[:, 1] >= frontier_threshold
     frontier_points = chin_region.points[frontier_mask]
     if len(frontier_points) == 0:
@@ -152,7 +156,11 @@ def estimate_mount_center(
             "selected_mount_center_world": np.round(center, 6).tolist(),
             "selected_mount_center_local": [0.0, 0.0, 0.0],
             "selection_method": "frontier_first_centerline_weighted_top_mean",
+            "frontier_percentile": FRONTIER_PERCENTILE,
             "frontier_y_threshold": frontier_threshold,
+            "front_bias_weight": FRONT_BIAS_WEIGHT,
+            "low_bias_weight": LOW_BIAS_WEIGHT,
+            "centerline_bias_weight": CENTERLINE_BIAS_WEIGHT,
             "score_min": float(np.min(candidate_scores)),
             "score_max": float(np.max(candidate_scores)),
             "score_mean": float(np.mean(candidate_scores)),
@@ -265,7 +273,11 @@ def _score_mount_center_candidates(points: np.ndarray, center_band_mm: float) ->
     y_score = _normalize_vector(y)
     z_score = 1.0 - _normalize_vector(z)
     center_bias = np.exp(-np.square(x / max(center_band_mm, 1.0)))
-    return 0.60 * y_score + 0.25 * z_score + 0.15 * np.maximum(x_score, center_bias)
+    return (
+        FRONT_BIAS_WEIGHT * y_score
+        + LOW_BIAS_WEIGHT * z_score
+        + CENTERLINE_BIAS_WEIGHT * np.maximum(x_score, center_bias)
+    )
 
 
 def _normalize_vector(values: np.ndarray) -> np.ndarray:

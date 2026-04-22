@@ -1,0 +1,10 @@
+{
+  "approved": true,
+  "mount_center_override": [0.0, 1.0, -2.0],
+  "patch_radius_mm": 5.0,
+  "contact_offset_mm": 1.0,
+  "footprint_width_mm": 24.0,
+  "footprint_height_mm": 18.0,
+  "saddle_height_mm": 4.0,
+  "notes": "Reference placement for sample benchmark regression."
+}

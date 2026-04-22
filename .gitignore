@@ -20,6 +20,7 @@ dist/
 
 outputs/*
 !outputs/.gitkeep
+benchmark/reports/*
 scans/*
 !scans/.gitkeep
 !scans/sample_box.stl

@@ -1,0 +1,7 @@
+{
+  "case_id": "sample_box",
+  "input_scan_path": "../../../scans/sample_box.stl",
+  "mount_asset_path": null,
+  "enabled": true,
+  "notes": "Local regression benchmark case for benchmark runner validation."
+}

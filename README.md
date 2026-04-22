@@ -23,6 +23,7 @@ python -m pip install -e .
 ```powershell
 python -m app.cli --help
 python -m app.cli process scans\helmet_scan.stl --mount gopro_low_profile_v1
+python -m app.benchmark run
 ```
 
 Each `process` run creates a timestamped directory under `outputs/` containing:
@@ -48,3 +49,58 @@ tests/
 ## Current Geometry Status
 
 `app.geometry.symmetry` solves an approximate YZ-like symmetry plane with sampled vertices, mirrored nearest-neighbor scoring, and trimmed mean error. `app.geometry.align` maps that plane to canonical `x=0` with the normal facing `+X`.
+
+## Benchmark
+
+Benchmark cases live under `benchmark/cases/<case_id>/`.
+
+Each case may contain:
+
+- `case.json`
+- `review.reference.json`
+
+Minimal `case.json` fields:
+
+```json
+{
+  "case_id": "helmet_a",
+  "input_scan_path": "C:/local/path/to/Mesh.ply",
+  "mount_asset_path": "C:/local/path/to/mount.stl",
+  "enabled": true,
+  "notes": "optional note"
+}
+```
+
+Run the benchmark:
+
+```powershell
+python -m app.benchmark run
+```
+
+Outputs are written under `benchmark/reports/<timestamp>/`:
+
+- `benchmark_summary.json`
+- `benchmark_summary.csv`
+- `benchmark_report.md`
+
+Per-case run folders keep the normal debug artifacts:
+
+- `mount_center_debug.json`
+- `patch_bounds_debug.json`
+- `frame_debug.json`
+- `placement_debug_top.png`
+- `placement_debug_perspective.png`
+- `saddle_debug.json`
+- `result.json`
+
+Interpretation guidance:
+
+- lower `reference_center_distance_mm` is better
+- lower `p90_gap_mm` is better
+- higher `coverage_ratio` is better
+- `shell_count > 1` means the export is not a single solid
+- `final_export_status = reviewed` means the run used an approved reference review
+
+Known benchmark limit:
+
+- cases that point to unavailable local scan files are skipped or marked unavailable; the repository keeps only manifests and reference reviews, not the real scan meshes

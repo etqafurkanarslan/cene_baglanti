@@ -1,0 +1,7 @@
+{
+  "case_id": "helmet_b",
+  "input_scan_path": "REPLACE_WITH_LOCAL_SCAN_PATH",
+  "mount_asset_path": null,
+  "enabled": false,
+  "notes": "Template case for real helmet scan benchmark."
+}
