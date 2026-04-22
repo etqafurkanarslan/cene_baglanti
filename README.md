@@ -24,6 +24,7 @@ python -m pip install -e .
 python -m app.cli --help
 python -m app.cli process scans\helmet_scan.stl --mount gopro_low_profile_v1
 python -m app.benchmark run
+python -m app.ui.server
 ```
 
 Each `process` run creates a timestamped directory under `outputs/` containing:
@@ -104,3 +105,41 @@ Interpretation guidance:
 Known benchmark limit:
 
 - cases that point to unavailable local scan files are skipped or marked unavailable; the repository keeps only manifests and reference reviews, not the real scan meshes
+
+## Local Review UI
+
+Start the local review UI:
+
+```powershell
+python -m app.ui.server
+```
+
+Then open `http://127.0.0.1:8000`.
+
+Workflow:
+
+1. Load a processed case from `outputs/`
+2. Inspect the aligned helmet mesh and overlays
+3. Click faces in include/exclude mode to mark the seating region
+4. Use move-center mode to click a manual center when needed
+5. Save `surface_selection.json` and `ui_review.json`
+6. Regenerate to create updated saddle outputs
+
+Saved UI files:
+
+- `surface_selection.json`
+- `ui_review.json`
+- `effective_review.json`
+
+Override precedence during regeneration:
+
+- UI surface selection centroid
+- manual UI mount center override
+- `review.json` / `ui_review.json` numeric fields
+- automatic placement heuristic
+
+Known UI limits:
+
+- V1 uses click-based face selection, not brush sculpting
+- surface selection currently influences regeneration via selection centroid, not a full custom patch fit
+- the frontend loads Three.js from a CDN

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cene_baglanti review UI</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <h1>Review UI</h1>
+      <button id="refreshCases">Refresh cases</button>
+      <div id="caseList" class="case-list"></div>
+    </aside>
+
+    <main class="main-panel">
+      <section class="viewer-panel">
+        <div class="toolbar">
+          <label>Selection mode
+            <select id="selectionMode">
+              <option value="include">include</option>
+              <option value="exclude">exclude</option>
+              <option value="move-center">move center</option>
+            </select>
+          </label>
+          <label><input type="checkbox" id="wireframeToggle"> wireframe</label>
+          <button id="clearSelection">Clear selection</button>
+          <button id="centerFromSelection">Center from selection</button>
+          <button id="saveSelection">Save selection</button>
+        </div>
+        <div id="viewer"></div>
+      </section>
+
+      <section class="details-panel">
+        <div class="panel-grid">
+          <div class="card">
+            <h2>Case</h2>
+            <pre id="caseSummary">No case loaded.</pre>
+          </div>
+          <div class="card">
+            <h2>Selection</h2>
+            <pre id="selectionSummary">No selection.</pre>
+          </div>
+          <div class="card">
+            <h2>Review</h2>
+            <label><input type="checkbox" id="approved"> approved</label>
+            <label>Manual center X <input id="centerX" type="number" step="0.01"></label>
+            <label>Manual center Y <input id="centerY" type="number" step="0.01"></label>
+            <label>Manual center Z <input id="centerZ" type="number" step="0.01"></label>
+            <label>Patch radius <input id="patchRadius" type="number" step="0.1"></label>
+            <label>Contact offset <input id="contactOffset" type="number" step="0.1"></label>
+            <label>Footprint width <input id="footprintWidth" type="number" step="0.1"></label>
+            <label>Footprint height <input id="footprintHeight" type="number" step="0.1"></label>
+            <label>Saddle height <input id="saddleHeight" type="number" step="0.1"></label>
+            <label>Notes <textarea id="reviewNotes" rows="4"></textarea></label>
+            <button id="saveReview">Save review</button>
+            <button id="regenerate">Regenerate</button>
+          </div>
+          <div class="card">
+            <h2>Compare</h2>
+            <pre id="compareSummary">No regeneration yet.</pre>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
+
